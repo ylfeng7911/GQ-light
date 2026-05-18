@@ -16,7 +16,7 @@ __all__ = ['RTDETR', ]
 
 
 @register()
-class RTDETR(nn.Module):
+class RTDETR(nn.Module):            #RT-DETR是一级模块，后面分backbone\encoder\decoder
     __inject__ = ['backbone', 'encoder', 'decoder', ]
 
     def __init__(self, \
@@ -33,7 +33,7 @@ class RTDETR(nn.Module):
         samples = x
         x = self.backbone(x)            #特征图列表，下采样8,16,32
         feat_max = x[0]
-        x = x[1:]
+        x = x[1:]     
         x = self.encoder(x)             #编码器+PAN交互过的特征图列表，尺度从大到小，c=256
         x = self.decoder(x, targets, feat_max)    #
 

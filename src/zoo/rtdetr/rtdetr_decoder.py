@@ -17,7 +17,7 @@ from .denoising import get_contrastive_denoising_training_group
 from .utils import deformable_attention_core_func, get_activation, inverse_sigmoid
 from .utils import bias_init_with_prob
 from .group_attention import grouped_self_conv,grouped_self_con_one_stage,GatedResidualBlock1d
-from .modules import MSDeformableAttention,CrossScaleAlignFuse
+from .modules import MSDeformableAttention,CrossScaleAlignFuse,CrossScaleAlignFuseONNX
 from ...core import register
 
 
@@ -200,6 +200,7 @@ class TransformerDecoderLayer(nn.Module):
             self.cross_attn = MSDeformableAttention(d_model, n_head, 1, n_points)    #n_levels
         else:
             self.cross_attn = MSDeformableAttention(d_model, n_head, n_levels, n_points)  
+        # print(f'cross_attn params: {sum(p.numel() for p in self.cross_attn.parameters()) / 1e6:.4f} M')
         self.dropout2 = nn.Dropout(dropout)
         self.norm2 = nn.LayerNorm(d_model)
 
@@ -250,9 +251,23 @@ class TransformerDecoderLayer(nn.Module):
 
         return tgt
 
- 
+
+# class IGF(nn.Module):
+#     def __init__(self, dim=256, dropout=0.):
+#         super().__init__()
+#         self.IGF = GatedResidualBlock1d(dim=dim)
+#         self.dropout = nn.Dropout(dropout)
+#         self.norm = nn.LayerNorm(dim)
+#     def forward(self, x, key_padding_mask=None):
+#         # x: [B, C, L] or [B, L, C] 视你的实现而定
+#         out = self.IGF(x, key_padding_mask)
+#         out = self.dropout(out)
+#         out = self.norm(out)
+#         return out
+    
 class TransformerDecoder(nn.Module):    #参考点和偏移量全是预测得到的
-    def __init__(self, hidden_dim, decoder_layer, num_layers, eval_idx=-1, GQI_enable=True, GQI_num_layers=3):
+    def __init__(self, hidden_dim, decoder_layer, num_layers, eval_idx=-1, GQI_enable=True, GQI_num_layers=3,
+                 ifexport=False):
         super(TransformerDecoder, self).__init__()
         self.layers = nn.ModuleList([copy.deepcopy(decoder_layer) for _ in range(num_layers)])
         self.hidden_dim = hidden_dim
@@ -263,12 +278,20 @@ class TransformerDecoder(nn.Module):    #参考点和偏移量全是预测得到
         self.GQI_num_layers = GQI_num_layers
         self.GQI_enable = GQI_enable
         if GQI_enable:
-            self.conv_mixer = nn.ModuleList([           #MSGC
+            self.conv_mixer = nn.ModuleList([           # IGF
                 GatedResidualBlock1d(dim=256)
                 for _ in range(self.GQI_num_layers)
             ])
-            self.dropout = nn.Dropout(0.)
-            self.norm = nn.LayerNorm(256)
+            # self.dropout = nn.Dropout(0.)
+            # self.norm = nn.LayerNorm(256)
+            
+            # self.conv_mixer = nn.ModuleList([
+            #     IGF(dim=256, dropout=0.)
+            #     for _ in range(self.GQI_num_layers)
+            # ])
+        
+        #export
+        self.ifexport = ifexport
         
         
         
@@ -297,13 +320,14 @@ class TransformerDecoder(nn.Module):    #参考点和偏移量全是预测得到
             query_pos_embed = query_pos_head(ref_points_detach)     #[b,500,4] -> [b,500,256]表示query的位置嵌入,
             
             # output[:, -300:, :] = self._masa(output[:, -300:, :], M_snapshot, B) 
-            if i >= 6 - self.GQI_num_layers and self.GQI_enable:
+            if i >= 3 - self.GQI_num_layers and self.GQI_enable:
                 group_logits = score_head[i](output)
                 if i==0:
                     inter_ref_bbox =  F.sigmoid(bbox_head[i](output) + inverse_sigmoid(ref_points_detach)) #预测框
-                output2  = grouped_self_conv(output,group_logits, self.conv_mixer[i- 6 + self.GQI_num_layers], inter_ref_bbox, 300)
-                output = output + self.dropout(output2)
-                output = self.norm(output)
+                output  = grouped_self_conv(output,group_logits, self.conv_mixer[i - 3 + self.GQI_num_layers],
+                                             inter_ref_bbox, 300, ifexport=self.ifexport)
+                # output = output + self.dropout(output2)
+                # output = self.norm(output)
 
                 # visualize_groups_on_image(inter_ref_bbox[:,-300:,:],labels, samples,"./vis_CGA_results",i , new_labels_b, fg_idx, targets,group_logits[:,-300:,:])
                 
@@ -361,6 +385,8 @@ class RTDETRTransformer(nn.Module):
                  GQI_enable=True,
                  GQI_num_layers=3,
                  CSAF_enable=True,
+                 max_feat_c = 24,
+                 ifexport=False,
                  eps=1e-2, 
                  aux_loss=True,
                  version='v1'):
@@ -389,7 +415,7 @@ class RTDETRTransformer(nn.Module):
 
         # Transformer module
         decoder_layer = TransformerDecoderLayer(hidden_dim, nhead, dim_feedforward, dropout, activation, num_levels, num_points, CSAF_enable)
-        self.decoder = TransformerDecoder(hidden_dim, decoder_layer, num_layers, eval_idx, GQI_enable, GQI_num_layers)
+        self.decoder = TransformerDecoder(hidden_dim, decoder_layer, num_layers, eval_idx, GQI_enable, GQI_num_layers,ifexport)
 
         self.num_denoising = num_denoising
         self.label_noise_ratio = label_noise_ratio
@@ -438,7 +464,13 @@ class RTDETRTransformer(nn.Module):
         # 最大特征图
         self.CSAF_enable = CSAF_enable
         if CSAF_enable:
-            self.Fuse = CrossScaleAlignFuse(256)
+            self.max_feat_proj = nn.Sequential(
+                    nn.Conv2d(max_feat_c, hidden_dim, kernel_size=1, bias=False),       #resnset18是64，mbv3L是24, faster是40
+                    nn.BatchNorm2d(hidden_dim))
+            if ifexport:
+                self.Fuse = CrossScaleAlignFuseONNX(256)
+            else:
+                self.Fuse = CrossScaleAlignFuse(256)
         
         self._reset_parameters()
 
@@ -615,6 +647,7 @@ class RTDETRTransformer(nn.Module):
 
         # CSAF 极尺度融合
         if self.CSAF_enable:
+            feat_max = self.max_feat_proj(feat_max)
             feat_fuse = self.Fuse(feat_max,feats[-1])
             b,c,h,w = feat_fuse.shape
             memory =  feat_fuse.permute(0, 2, 3, 1).reshape(b, h * w, c)            #[b,hw,c]
@@ -660,3 +693,25 @@ class RTDETRTransformer(nn.Module):
         # as a dict having both a Tensor and a list.
         return [{'pred_logits': a, 'pred_boxes': b}
                 for a, b in zip(outputs_class, outputs_coord)]      #把两个tensor拼成2元素字典
+
+
+
+if __name__ == "__main__":
+    self_attn = nn.MultiheadAttention(256, 8, dropout=0.0, batch_first=True)
+    cross_attn = MSDeformableAttention(256, 8, 3, 4)  
+    
+    x = torch.randn([1,300,256])
+    reference_points = torch.randn([1,300,1,4])
+    memory = torch.randn([1,8400,256])
+    memory_spatial_shapes = torch.randn([[80, 80], [40, 40], [20, 20]])
+    memory_mask = None
+    
+    output1 = self_attn(x, x, x)
+    output2 = cross_attn(x,
+                         reference_points,          #[b,500,1,4] 
+                         memory,                    #[b,hw,256]
+                         memory_spatial_shapes,     #[[80, 80], [40, 40], [20, 20]]
+                         memory_mask
+                         )
+    
+    

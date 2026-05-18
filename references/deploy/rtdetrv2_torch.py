@@ -81,9 +81,9 @@ def main(args, ):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--config', type=str, default='../configs/rtdetr/rtdetr_r50vd_6x_coco.yml')
+    parser.add_argument('-c', '--config', type=str, default='../configs/gqdetr/gqdetr_r50vd_6x_coco.yml')
     parser.add_argument('-r', '--resume', type=str, 
-                        default='/root/fengyulei/exps/20251202_163146_CGA_CBAMjiCA_2_14_seed42/last.pth')
+                        default='/home/fyl/workspace_fyl/GQ-light/exps_light/20251212_050003_UAVSwarm_GQDETR/best.pth')
     parser.add_argument('-f', '--im-file', type=str, default='../test_scene/UAVSwarm1/t8-43.jpg')
     parser.add_argument('-d', '--device', type=str, default='cuda:0')      #cpu 
     args = parser.parse_args()

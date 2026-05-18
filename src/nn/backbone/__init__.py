@@ -16,3 +16,9 @@ from .csp_resnet import CSPResNet
 from .csp_darknet import CSPDarkNet, CSPPAN
 
 from .hgnetv2 import HGNetv2
+
+from .mobilenetv3_large import MobileNetV3LargeBackbone
+
+from .fasternet import FasterNet
+
+from .yolo11 import YOLO11Backbone

@@ -1,2 +1,5 @@
-/exps
+/exps_light/
+/exports/
 *.pth
+*.pt
+*.onnx 

@@ -86,9 +86,9 @@ class GatedConv1d(nn.Module):
         out, gate = out.chunk(2, dim=1)  # 划分为信号和门
         return out * torch.sigmoid(gate) # 门控调节
 
-
+#IGF
 class MultiScaleGatedConv1d(nn.Module):
-    def __init__(self, dim, kernels=(3, 7), dilations=(1, 4)):        #kernels=(3, 5, 7), dilations=(1, 2, 4)
+    def __init__(self, dim, kernels=(3,7), dilations=(1,4)):        #kernels=(3, 7), dilations=(1, 4)
         super().__init__()
         #原版
         # self.convs = nn.ModuleList([
@@ -218,14 +218,14 @@ def kmeans_torch(x, K=2, num_iters=10, eps=1e-6, seed=0):
         x_norm2 = (x * x).sum(dim=1, keepdim=True)           # [N,1]
         c_norm2 = (centers * centers).sum(dim=1, keepdim=True).T  # [1,K]
         dist = x_norm2 - 2.0 * (x @ centers.T) + c_norm2     # [N,K]
-        new_labels = torch.argmin(dist, dim=1)               # [N]
+        new_labels = torch.argmin(dist, dim=1)               # [N]          计算欧式距离，和哪个中心近归哪个
         if it > 0 and torch.equal(new_labels, labels):
             break
-        labels = new_labels
+        labels = new_labels                                                 #重新分配标签
         centers_prev = centers.clone()
         # 更新 centers
         for k in range(K):
-            mask = (labels == k)
+            mask = (labels == k)                                            #更新2个簇的中心，再次迭代
             if mask.any():
                 centers[k] = x[mask].mean(dim=0)
             else:
@@ -235,6 +235,60 @@ def kmeans_torch(x, K=2, num_iters=10, eps=1e-6, seed=0):
             break
     return labels, centers
 
+
+def deterministic_2means(x, eps=1e-6):
+    """
+    Deterministic substitute for KMeans (K=2)
+    x: [N, C]
+    return:
+        labels: [N] (0 or 1)
+        centers: [2, C]
+    """
+    device = x.device
+    N, C = x.shape
+
+    if N == 0:
+        return (
+            torch.empty(0, dtype=torch.long, device=device),
+            torch.empty((2, C), device=device),
+        )
+
+    # 1. mean center
+    mu = x.mean(dim=0, keepdim=True)          # [1, C]
+    xc = x - mu                               # [N, C]
+
+    # 2. dominant direction (no eigen, ONNX-safe)
+    # use sum of squared values as a cheap proxy
+    # direction ~ sum_i |x_i - mu|
+    direction = xc.abs().mean(dim=0)          # [C]
+    direction = direction / (direction.norm() + eps)
+
+    # 3. projection
+    proj = xc @ direction                     # [N]
+
+    # 4. deterministic split
+    thresh = proj.mean()                      # scalar
+    labels = (proj > thresh).long()           # [N]
+
+    # 5. compute centers
+    mask0 = labels == 0
+    mask1 = ~mask0
+
+    c0 = torch.where(
+        mask0.unsqueeze(1),
+        x,
+        torch.zeros_like(x),
+    ).sum(dim=0) / (mask0.sum().clamp(min=1).float())
+
+    c1 = torch.where(
+        mask1.unsqueeze(1),
+        x,
+        torch.zeros_like(x),
+    ).sum(dim=0) / (mask1.sum().clamp(min=1).float())
+
+    centers = torch.stack([c0, c1], dim=0)    # [2, C]
+
+    return labels, centers
 
 
 # 单阶段版本
@@ -379,6 +433,7 @@ def grouped_self_conv(
     kmeans_iters=10,
     min_keep=1,
     min_keep_bg=1,
+    ifexport=False,
 ):
     """
     基于聚类的分组卷积交互：
@@ -410,10 +465,14 @@ def grouped_self_conv(
     for b in range(B):
         x = tgt0[b]
         score_b = scores_all[b] 
-        feats = F.normalize(x.detach(), p=2, dim=1)
+        feats = F.normalize(x.detach(), p=2, dim=1)         #归一化，固定通道c,对不同的q进行归一化（？？？）
 
         K_b = min(K, max(1, M))
-        labels, centers = kmeans_torch(feats, K=K_b, num_iters=kmeans_iters, seed=b+1)  
+        if ifexport:
+            labels, centers = deterministic_2means(feats)
+        else:
+            labels, centers = kmeans_torch(feats, K=K_b, num_iters=kmeans_iters, seed=b+1)  
+        
 
         cluster_scores = []
         for k in range(K_b):
@@ -556,209 +615,6 @@ def grouped_self_conv(
     tgt_new = torch.cat([tgt[:, :-M, :], tgt0_new], dim=1)
     return tgt_new
     # return tgt_new, labels, new_labels_b, fg_idx 
-
-
-
-
-# 两阶段版本
-def grouped_self_attn(
-    tgt,                       # [B, Q, C]
-    enc_topk_logits,           # [B, Q, num_classes]
-    attn_mixer,
-    ref_boxes,
-    num_queries=300,
-    K=2,                       # 聚类簇数
-    kmeans_iters=10,
-    min_keep=1,
-    min_keep_bg=1,
-):
-    """
-    基于聚类的分组卷积交互：
-    - 在 tgt 的最后 num_queries 个 queries 上做聚类
-    - 用 enc_topk_logits 的平均前景概率判定前/背景簇
-    - 对每个簇做 1D 卷积交互
-    """
-    second_stage_iou_thresh = 0.3
-    B, Q, C = tgt.shape
-    device = tgt.device
-    M = num_queries
-    
-    tgt0 = tgt[:, -M:, :].contiguous()
-    logits0 = enc_topk_logits[:, -M:, :].contiguous()
-
-    if logits0.shape[-1] == 1:
-        scores_all = torch.sigmoid(logits0.view(B, M))
-    else:
-        probs = torch.softmax(logits0, dim=-1)
-        fg_idx = 1 if logits0.shape[-1] > 1 else 0
-        scores_all = probs[..., fg_idx]
-
-    tgt0_new = torch.zeros_like(tgt0)
-
-    tgt_fg_list, tgt_bg_list = [], []
-    idx_fg_list, idx_bg_list = [], []
-    len_fg_list, len_bg_list = [], []
-
-    # 1.每个样本：做聚类，得到前后景tgt列表、前后景idx列表
-    for b in range(B):
-        x = tgt0[b]
-        score_b = scores_all[b] 
-        feats = F.normalize(x.detach(), p=2, dim=1)
-
-        K_b = min(K, max(1, M))
-        labels, centers = kmeans_torch(feats, K=K_b, num_iters=kmeans_iters, seed=b+1)  
-
-        cluster_scores = []
-        for k in range(K_b):
-            mask_k = (labels == k)
-            if mask_k.sum() == 0:
-                cluster_scores.append(torch.tensor(-1.0, device=device))
-            else:
-                cluster_scores.append(scores_all[b][mask_k].mean().detach())
-        cluster_scores = torch.stack(cluster_scores)
-
-        # 判别1：score
-        fg_cluster_idx = int(torch.argmax(cluster_scores).item())
-        fg_mask_b = (labels == fg_cluster_idx)
-        bg_mask_b = ~fg_mask_b
-
-        if fg_mask_b.sum() < min_keep:
-            _, topk_idx = torch.topk(scores_all[b], min(min_keep, M), dim=0)
-            new_fg = torch.zeros_like(fg_mask_b)
-            new_fg[topk_idx] = True
-            fg_mask_b = new_fg
-            bg_mask_b = ~fg_mask_b
-
-        if bg_mask_b.sum() < min_keep_bg:
-            lowest = torch.argmin(scores_all[b])
-            bg_mask_b[lowest] = True
-            fg_mask_b[lowest] = False
-
-        idx_fg = torch.nonzero(fg_mask_b, as_tuple=False).squeeze(-1)
-        idx_bg = torch.nonzero(bg_mask_b, as_tuple=False).squeeze(-1)
-        tgt_fg = x[idx_fg] if idx_fg.numel() > 0 else x.new_zeros((0, C))
-        tgt_bg = x[idx_bg] if idx_bg.numel() > 0 else x.new_zeros((0, C))
-        
-        # 判别2：box  把 background 中与 foreground box IoU高的移到 foreground（修改tgt集合和idx集合）
-        # 使用 ref_boxes 对应最后 M 个 queries
-        # 假定 ref_boxes 是 [B, Q_total, 4]，且 boxes 格式为 cx,cy,w,h
-        if idx_bg.numel() > 0 and idx_fg.numel() > 0:
-            boxes_b = ref_boxes[b, -M:, :]  # [M,4]
-            # select bg boxes and fg boxes
-            bg_boxes = boxes_b[idx_bg]  # [nb,4]
-            fg_boxes = boxes_b[idx_fg]  # [nf,4]
-            # compute IoU matrix [nb, nf]
-            iou_mat = boxes_iou(bg_boxes, fg_boxes)
-            # for each bg box, check max IoU with any fg box
-            max_iou_per_bg, _ = iou_mat.max(dim=1)  # [nb]
-            # determine which bg indices to move
-            move_mask = max_iou_per_bg > float(second_stage_iou_thresh)
-            if move_mask.any():
-                # 接受再分类的（背景集合）下标
-                move_idx_in_bg = torch.nonzero(move_mask, as_tuple=False).squeeze(-1)
-                if move_idx_in_bg.dim() == 0:
-                    move_idx_in_bg = move_idx_in_bg.unsqueeze(0)
-                # 接受再分类的（全集）下标
-                to_move_query_indices = idx_bg[move_idx_in_bg]  # global within last M queries (0..M-1)
-                # new_idx_bg是原本idx_bg的子集(若全移动需要额外处理)
-                if idx_bg.numel() == move_idx_in_bg.numel():    #全移动
-                    # all bg moved -> bg becomes empty
-                    new_idx_bg = idx_bg.new_zeros((0,), dtype=torch.long)   # 空张量[]
-                else:
-                    mask_keep_bg = torch.ones_like(idx_bg, dtype=torch.bool)
-                    mask_keep_bg[move_idx_in_bg] = False
-                    new_idx_bg = idx_bg[mask_keep_bg]
-
-                new_idx_fg = torch.cat([idx_fg, to_move_query_indices], dim=0)
-
-                # sort indices for stability (可选)
-                new_idx_fg, _ = torch.sort(new_idx_fg)
-                if new_idx_bg.numel() > 0:
-                    new_idx_bg, _ = torch.sort(new_idx_bg)
-
-                # 保证new_idx_fg一定是
-                tgt_fg = x[new_idx_fg] if new_idx_fg.numel() > 0 else x.new_zeros((0, C))
-                tgt_bg = x[new_idx_bg] if new_idx_bg.numel() > 0 else x.new_zeros((0, C))
-
-                idx_fg = new_idx_fg
-                idx_bg = new_idx_bg
-        # ----- end second-stage -----
-        
-        #调试！！！
-        new_labels_b = torch.zeros(M, dtype=torch.long, device=device)
-        # 将前景query对应的label设置为1
-        if idx_fg.numel() > 0:
-            new_labels_b[idx_fg] = fg_cluster_idx
-        if idx_bg.numel() > 0:
-            new_labels_b[idx_bg] = 1 - fg_cluster_idx
-        
-        tgt_fg_list.append(tgt_fg)
-        tgt_bg_list.append(tgt_bg)
-        idx_fg_list.append(idx_fg)
-        idx_bg_list.append(idx_bg)
-        len_fg_list.append(tgt_fg.size(0))
-        len_bg_list.append(tgt_bg.size(0))
-
-    # 2.分别对前后景：每个样本对应的tgt补零到batch中的最长长度
-    max_fg = max(len_fg_list) if len_fg_list else 0
-    max_bg = max(len_bg_list) if len_bg_list else 0
-
-    def pad_group_list(group_list, max_len):
-        padded = []
-        for x in group_list:
-            cur = x
-            pad = max_len - cur.size(0)
-            if pad == 0:
-                padded.append(cur)
-            else:
-                if cur.size(0) == 0:
-                    padded.append(cur.new_zeros((max_len, C)))      #创建(max_len, C)的zeros，继承cur的type
-                else:
-                    padded.append(F.pad(cur, (0, 0, 0, pad)))
-        return torch.stack(padded, dim=0) if len(padded) > 0 else tgt0.new_zeros((B, 0, C))
-
-    padded_tgt_fg = pad_group_list(tgt_fg_list, max_fg) if max_fg > 0 else tgt0.new_zeros((B, 0, C))
-    padded_tgt_bg = pad_group_list(tgt_bg_list, max_bg) if max_bg > 0 else tgt0.new_zeros((B, 0, C))
-
-    
-    # 3.补零后前后景tgt交互（带屏蔽）
-    if max_fg > 0:
-        lengths_fg = torch.tensor(len_fg_list, device=device)
-        key_pad_fg = (torch.arange(max_fg, device=device).unsqueeze(0).expand(B, -1) >= lengths_fg.unsqueeze(1)).to(torch.bool)#掩码，T表示pad部分
-        padded_tgt_fg_after, _ = attn_mixer(
-            query=padded_tgt_fg, 
-            key=padded_tgt_fg, 
-            value=padded_tgt_fg, 
-            key_padding_mask=key_pad_fg
-        )
-    else:
-        padded_tgt_fg_after = padded_tgt_fg
-
-    if max_bg > 0:
-        lengths_bg = torch.tensor(len_bg_list, device=device)
-        key_pad_bg = (torch.arange(max_bg, device=device).unsqueeze(0).expand(B, -1) >= lengths_bg.unsqueeze(1)).to(torch.bool)
-        padded_tgt_bg_after, _ = attn_mixer(
-            query=padded_tgt_bg, 
-            key=padded_tgt_bg, 
-            value=padded_tgt_bg, 
-            key_padding_mask=key_pad_bg
-        )
-    else:
-        padded_tgt_bg_after = padded_tgt_bg
-
-    # 4.从补零tgt中取出真实长度的tgt再写回
-    for b in range(B):
-        lf = len_fg_list[b]
-        lb = len_bg_list[b]
-        if lf > 0:
-            tgt0_new[b, idx_fg_list[b]] = padded_tgt_fg_after[b, :lf].to(tgt0_new.dtype)
-        if lb > 0:
-            tgt0_new[b, idx_bg_list[b]] = padded_tgt_bg_after[b, :lb].to(tgt0_new.dtype)
-
-    tgt_new = torch.cat([tgt[:, :-M, :], tgt0_new], dim=1)
-    # return tgt_new
-    return tgt_new 
-
 
 
 

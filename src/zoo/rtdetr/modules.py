@@ -512,7 +512,7 @@ class CBAM(nn.Module):
         return self.dropout(x)
 
 
-
+#正常CSAF
 class CrossScaleAlignFuse(nn.Module):
     def __init__(self, c, deform_groups=4):
         super().__init__()
@@ -541,7 +541,91 @@ class CrossScaleAlignFuse(nn.Module):
         # beta = 0.6
         # fused = P2 + beta * (P5_aligned - P2)
         return self.out_proj(fused)
+    
+#只有P2
+# class CrossScaleAlignFuse(nn.Module):
+#     def __init__(self, c, deform_groups=4):
+#         super().__init__()
+#         self.CBAM_P2 = CBAM(256)
+#         self.out_proj = nn.Conv2d(c, c, 1)
 
+#     def forward(self, P2, P5):
+#         P2 = self.CBAM_P2(P2)
+#         return self.out_proj(P2)
+    
+#只有p5  
+# class CrossScaleAlignFuse(nn.Module):
+#     def __init__(self, c, deform_groups=4):
+#         super().__init__()
+#         self.CBAM_P5 = CBAM(256)
+#         self.out_proj = nn.Conv2d(c, c, 1)
+
+#     def forward(self, P2, P5):
+#         P5 = self.CBAM_P5(P5)
+#         return self.out_proj(P5)
+    
+
+
+
+
+
+class DeformAlignONNX(nn.Module):
+    def __init__(self, c):
+        super().__init__()
+        self.offset_gen = nn.Conv2d(c, 2, 3, 1, 1)  # 简化：per-pixel offset
+        self.proj = nn.Conv2d(c, c, 3, padding=1)
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        offset = self.offset_gen(x)          # [B, 2, H, W]
+
+        # build base grid (static, cacheable)
+        grid_y, grid_x = torch.meshgrid(
+            torch.linspace(-1, 1, H, device=x.device),
+            torch.linspace(-1, 1, W, device=x.device),
+            indexing="ij"
+        )
+        base_grid = torch.stack([grid_x, grid_y], dim=-1)  # [H,W,2]
+        base_grid = base_grid.unsqueeze(0).repeat(B,1,1,1)
+
+        # normalize offset
+        offset = offset.permute(0,2,3,1)      # [B,H,W,2]
+        offset = offset / torch.tensor([W, H], device=x.device)
+
+        grid = base_grid + offset
+        x_aligned = F.grid_sample(
+            x, grid,
+            mode="bilinear",
+            padding_mode="zeros",
+            align_corners=True
+        )
+
+        return self.proj(x_aligned)
+
+
+class CrossScaleAlignFuseONNX(nn.Module):
+    def __init__(self, c, deform_groups=4):
+        super().__init__()
+        self.CBAM_P2 = CBAM(256)
+        self.CBAM_P5 = CBAM(256)
+        self.deform_align = DeformAlignONNX(c)
+        self.gate = nn.Sequential(
+            nn.Conv2d(c*2, c, 1),
+            nn.Sigmoid()
+        )
+        self.out_proj = nn.Conv2d(c, c, 1)
+
+    def forward(self, P2, P5):
+        P2 = self.CBAM_P2(P2)
+        P5 = self.CBAM_P5(P5)
+        # 上采样P5到P2尺度
+        P5_up = F.interpolate(P5, size=P2.shape[-2:], mode='bilinear', align_corners=False)
+        P5_aligned = self.deform_align(P5_up)
+
+        # 门控融合
+        g = self.gate(torch.cat([P2, P5_aligned], dim=1))
+        fused = P2 * g + P5_aligned * (1 - g)
+        return self.out_proj(fused)
 
 
 

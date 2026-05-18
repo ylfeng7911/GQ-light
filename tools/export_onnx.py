@@ -84,8 +84,11 @@ def main(args, ):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', '-c', type=str, )
-    parser.add_argument('--resume', '-r', type=str, )
+    parser.add_argument('--config', '-c', type=str, 
+                        default= '/home/fyl/workspace_fyl/GQ-DETR/configs/gqdetr/gqdetr_r50vd_6x_coco.yml',)
+    parser.add_argument('--resume', '-r', type=str, 
+                        default= '/home/fyl/workspace_fyl/exps/20251214_142847/checkpoint0001.pth')
+                        # default= '/home/fyl/workspace_fyl/exps/20251104_224228_UAVSwarm/last.pth',)
     parser.add_argument('--output_file', '-o', type=str, default='model.onnx')
     parser.add_argument('--input_size', '-s', type=int, default=640)
     parser.add_argument('--check',  action='store_true', default=False,)

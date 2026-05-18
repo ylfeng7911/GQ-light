@@ -51,19 +51,21 @@ class ConvNormLayer(nn.Module):
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, ch_in, ch_out, stride, shortcut, act='relu', variant='b'):
+    # stride：只有2,3,4Stage的第一个bb=2，其余为1；
+    # shortcut：第二个bb开始做
+    def __init__(self, ch_in, ch_out, stride, shortcut, act='relu', variant='b'):   
         super().__init__()
 
         self.shortcut = shortcut
 
         if not shortcut:
-            if variant == 'd' and stride == 2:
+            if variant == 'd' and stride == 2:      #如果stride=2就用平均池化下采样
                 self.short = nn.Sequential(OrderedDict([
                     ('pool', nn.AvgPool2d(2, 2, 0, ceil_mode=True)),
                     ('conv', ConvNormLayer(ch_in, ch_out, 1, 1))
                 ]))
-            else:
-                self.short = ConvNormLayer(ch_in, ch_out, 1, stride)
+            else:                                   #如果stride != 2 就不用池化
+                self.short = ConvNormLayer(ch_in, ch_out, 1, stride)        
 
         self.branch2a = ConvNormLayer(ch_in, ch_out, 3, stride, act=act)
         self.branch2b = ConvNormLayer(ch_out, ch_out, 3, 1, act=None)
@@ -84,7 +86,7 @@ class BasicBlock(nn.Module):
         return out
 
 
-class BottleNeck(nn.Module):
+class BottleNeck(nn.Module):        #3个卷积 + 残差，  通道数x4
     expansion = 4
 
     def __init__(self, ch_in, ch_out, stride, shortcut, act='relu', variant='b'):
@@ -92,14 +94,14 @@ class BottleNeck(nn.Module):
 
         if variant == 'a':
             stride1, stride2 = stride, 1
-        else:
+        else:       # d
             stride1, stride2 = 1, stride
 
         width = ch_out 
 
         self.branch2a = ConvNormLayer(ch_in, width, 1, stride1, act=act)
         self.branch2b = ConvNormLayer(width, width, 3, stride2, act=act)
-        self.branch2c = ConvNormLayer(width, ch_out * self.expansion, 1, 1)
+        self.branch2c = ConvNormLayer(width, ch_out * self.expansion, 1, 1)     #输出通道数=ch_outx4
 
         self.shortcut = shortcut
         if not shortcut:
@@ -129,18 +131,18 @@ class BottleNeck(nn.Module):
         return out
 
 
-class Blocks(nn.Module):
+class Blocks(nn.Module):    #多个bottleNeck的堆叠
     def __init__(self, block, ch_in, ch_out, count, stage_num, act='relu', variant='b'):
         super().__init__()
 
         self.blocks = nn.ModuleList()
-        for i in range(count):
+        for i in range(count):      #深度分别是3,4,6,3
             self.blocks.append(
                 block(
                     ch_in, 
                     ch_out,
-                    stride=2 if i == 0 and stage_num != 2 else 1, 
-                    shortcut=False if i == 0 else True,
+                    stride=2 if i == 0 and stage_num != 2 else 1,       #在2,3,4 Stage的第一个bb做下采样
+                    shortcut=False if i == 0 else True,                 #第二个bb开始做跳跃连接
                     variant=variant,
                     act=act)
             )
@@ -159,17 +161,17 @@ class Blocks(nn.Module):
 class PResNet(nn.Module):
     def __init__(
         self, 
-        depth, 
+        depth,                  #50
         variant='d', 
         num_stages=4, 
         return_idx=[0, 1, 2, 3], 
         act='relu',
-        freeze_at=-1, 
+        freeze_at=-1,           #0
         freeze_norm=True, 
-        pretrained=False):
+        pretrained=False):      #True
         super().__init__()
 
-        block_nums = ResNet_cfg[depth]
+        block_nums = ResNet_cfg[depth]  #[2，2，2，2]
         ch_in = 64
         if variant in ['c', 'd']:
             conv_def = [
@@ -181,26 +183,26 @@ class PResNet(nn.Module):
             conv_def = [[3, ch_in, 7, 2, "conv1_1"]]
 
         self.conv1 = nn.Sequential(OrderedDict([
-            (name, ConvNormLayer(cin, cout, k, s, act=act)) for cin, cout, k, s, name in conv_def
+            (name, ConvNormLayer(cin, cout, k, s, act=act)) for cin, cout, k, s, name in conv_def   #conv1:conv1_1, 1_2, 1_3
         ]))
 
         ch_out_list = [64, 128, 256, 512]
         block = BottleNeck if depth >= 50 else BasicBlock
 
-        _out_channels = [block.expansion * v for v in ch_out_list]
+        _out_channels = [block.expansion * v for v in ch_out_list]      # expansion=1   [256,512,1024,2048]
         _out_strides = [4, 8, 16, 32]
 
-        self.res_layers = nn.ModuleList()
-        for i in range(num_stages):
-            stage_num = i + 2
+        self.res_layers = nn.ModuleList()   # 构建4个stage子模块
+        for i in range(num_stages):     
+            stage_num = i + 2           # 2,3,4,5
             self.res_layers.append(
                 Blocks(block, ch_in, ch_out_list[i], block_nums[i], stage_num, act=act, variant=variant)
             )
             ch_in = _out_channels[i]
 
         self.return_idx = return_idx
-        self.out_channels = [_out_channels[_i] for _i in return_idx]
-        self.out_strides = [_out_strides[_i] for _i in return_idx]
+        self.out_channels = [_out_channels[_i] for _i in return_idx]            # [256,512,1024,2048]
+        self.out_strides = [_out_strides[_i] for _i in return_idx]              # [4, 8, 16, 32]
 
         if freeze_at >= 0:
             self._freeze_parameters(self.conv1)
@@ -233,13 +235,16 @@ class PResNet(nn.Module):
         return m
 
     def forward(self, x):
-        conv1 = self.conv1(x)
-        x = F.max_pool2d(conv1, kernel_size=3, stride=2, padding=1)
+        conv1 = self.conv1(x)       #通道3 ---> 64, 尺度/2
+        x = F.max_pool2d(conv1, kernel_size=3, stride=2, padding=1) #再次尺度/2
         outs = []
-        for idx, stage in enumerate(self.res_layers):
+        for idx, stage in enumerate(self.res_layers):       #stage是个Blocks模块，包含多个block
             x = stage(x)
-            if idx in self.return_idx:
+            if idx in self.return_idx:  #[0,1,2,3]
                 outs.append(x)
-        return outs     #3尺度
+        return outs     #3尺度,从大到小
 
-
+#流程 conv1 ---> max_pool ---> 4个残差stage（每个stage一张特征图）
+#每个stage是多个BottleNeck(或Basiclock)的堆叠（在第一个BottleNeck处下采样）
+#输出通道数分别是256，512,1024,2048
+#下采样率分别为4,8,16,32

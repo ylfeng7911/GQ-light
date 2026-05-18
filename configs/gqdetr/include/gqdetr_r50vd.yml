@@ -60,8 +60,10 @@ RTDETRTransformer:
 
   eval_idx: -1
   GQI_enable: True    #若GQI和CSAF均不enable，则模型等于RT-DETR
-  GQI_num_layers: 3     #[0,6]
+  GQI_num_layers: 2     #[0,6]
   CSAF_enable: True
+  max_feat_c: 64        #最大特征图的通道数
+  ifexport: False
 
 
 RTDETRPostProcessor:
@@ -69,14 +71,14 @@ RTDETRPostProcessor:
 
 
 RTDETRCriterion:
-  weight_dict: {loss_vfl: 1, loss_bbox: 5, loss_giou: 2, loss_ar: 0, loss_NWD: 0}   #bbox=5,GIOU=2
+  weight_dict: {loss_vfl: 1, loss_bbox: 5, loss_giou: 2}   #bbox=5,GIOU=2       , loss_ar: 0, loss_NWD: 0
   losses: ['vfl', 'boxes']   # ,'ar', 'NWD'
   alpha: 0.75
   gamma: 2.0
 
   matcher:
     type: HungarianMatcher
-    weight_dict: {cost_class: 2, cost_bbox: 5, cost_giou: 2, cost_NWD: 0}   #cost_bbox: 5, cost_giou: 2
+    weight_dict: {cost_class: 2, cost_bbox: 5, cost_giou: 2}   #cost_bbox: 5, cost_giou: 2        , cost_NWD: 0
     alpha: 0.25
     gamma: 2.0
 

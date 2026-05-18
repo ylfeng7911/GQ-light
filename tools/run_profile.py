@@ -83,7 +83,7 @@ def profile_stats(
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--config', type=str, default='/root/fengyulei/rt-work/configs/rtdetr/rtdetr_r50vd_6x_coco.yml')
+    parser.add_argument('-c', '--config', type=str, default='/home/fyl/workspace_fyl/GQ-light/configs/gqdetr/gqdetr_fasternet_6x.yml')
     parser.add_argument('-d', '--device', type=str, default='cuda:0', help='device',)
     args = parser.parse_args()
 

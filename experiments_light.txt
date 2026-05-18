@@ -1,0 +1,194 @@
+
+/root/fengyulei/YOLO/runs/train
+YOLO26L_预训练 
+参数26M，86.1GFLOPS
+Class     Images  Instances   Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 142/142 12.4it/s 11.4s
+all       5667      37288      0.929      0.875      0.907      0.449
+
+/root/fengyulei/YOLO/runs/train
+YOLO26L_无预训练 
+参数26M，86.1GFLOPS
+Class     Images  Instances    Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 142/142 11.8it/s 12.0s
+all       5667      37288      0.865      0.811      0.886      0.423
+
+YOLOV8M
+参数26M
+YOLOv8m summary (fused): 93 layers, 25,840,339 parameters, 0 gradients, 78.7 GFLOPs
+Class     Images  Instances    Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 142/142 12.3it/s 11.6s
+all       5667      37288       0.89      0.817      0.864      0.401
+
+YOLO12L
+YOLO12l summary (fused): 283 layers, 26,339,843 parameters, 0 gradients, 88.5 GFLOPs
+                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 142/142 9.4it/s 15.1s
+                   all       5667      37288      0.913      0.855      0.891      0.408
+Speed: 0.0ms preprocess, 1.4ms inference, 0.0ms loss, 0.2ms postprocess per image
+
+
+
+
+/home/fyl/workspace_fyl/GQ-light/exps_light/20260422_142235_MBV3L
+mobileV3-large（6解码器层）这是没有预训练的
+参数共28M
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.398
+ Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.835
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.315
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.380
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.460
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.630
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.083
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.394
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.510
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.497
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.572
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.710
+ Average Recall     (AR) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.909
+ Average Recall     (AR) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.509
+
+
+
+/home/fyl/workspace_fyl/GQ-light/exps_light/20260423_102212
+resnet-r18（解码器原是3层，我这里加到6层）有预训练
+这是主要对比的对象，后面再看一下3层的
+参数共29M
+IoU metric: bbox
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.439
+ Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.895
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.366
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.419
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.520
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.683
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.086
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.428
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.546
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.530
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.626
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.723
+ Average Recall     (AR) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.939
+ Average Recall     (AR) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.566
+best_stat: {'epoch': 26, 'coco_eval_bbox': 0.44894970694919034}
+Training time 5:21:09
+
+
+/home/fyl/workspace_fyl/GQ-light/exps_light/20260425_163854
+resnet-r18（解码器原是3层，我这里加到6层）无预训练
+IoU metric: bbox
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.413
+ Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.861
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.339
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.390
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.507
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.663
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.081
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.397
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.517
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.502
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.591
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.734
+ Average Recall     (AR) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.918
+ Average Recall     (AR) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.511
+best_stat: {'epoch': 33, 'coco_eval_bbox': 0.41865423332597096}
+
+
+/home/fyl/workspace_fyl/GQ-light/exps_light/20260425_214747
+mbnet
+IoU metric: bbox
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.401
+ Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.847
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.321
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.382
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.471
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.643
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.082
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.399
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.515
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.502
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.577
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.700
+ Average Recall     (AR) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.913
+ Average Recall     (AR) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.519
+best_stat: {'epoch': 27, 'coco_eval_bbox': 0.40253025556370275}
+
+
+
+/home/fyl/workspace_fyl/GQ-light/exps_light/20260514_214926
+fasternet-t1
+参数量29M
+[0.41667398444858356, 0.8747117588260813, 0.33772498692553127, 
+0.3955200532584197, 0.49698028118615106, 0.6823276216163177, 
+0.0836640577647772, 0.40794529211795405, 0.5211241995414657, 
+0.5038874246987952, 0.6049468733670093, 0.7251497005988023]
+
+
+
+/home/fyl/workspace_fyl/GQ-light/exps_light/20260515_134435
+fasternet-t1
+编码器的扩张率改为0.5
+参数量23.7M,已经低于R18！！！！！那么这个改动是可以的。
+IoU metric: bbox
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.424
+ Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.866
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.353
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.406
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.499
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.642
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.084
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.414
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.535
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.519
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.615
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.747
+ Average Recall     (AR) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.925
+ Average Recall     (AR) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.543
+best_stat: {'epoch': 38, 'coco_eval_bbox': 0.42399428793997385}
+效果和扩张率，AP50掉了，AP75涨了
+
+
+/home/fyl/workspace_fyl/GQ-light/exps_light/20260517_104655
+yolo11-s骨干
+参数量22.9M
+IoU metric: bbox
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.421
+ Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.875
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.342
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.399
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.503
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.665
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.085
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.409
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.522
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.506
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.600
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.720
+ Average Recall     (AR) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.931
+ Average Recall     (AR) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.515
+best_stat: {'epoch': 39, 'coco_eval_bbox': 0.420603643143506}
+Training time 10:31:18
+比faster-T0稍微差一点，但是比R18好
+
+
+
+
+/home/fyl/workspace_fyl/GQ-light/exps_light/20260517_224456
+r18,解码器层=3，GQI=2
+IoU metric: bbox
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.414
+ Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.862
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.333
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.392
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.499
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.637
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.084
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.404
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.519
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.502
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.604
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.704
+ Average Recall     (AR) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.920
+ Average Recall     (AR) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.513
+best_stat: {'epoch': 24, 'coco_eval_bbox': 0.42497316133889973}
+解码器层=3反而效果最好，但是有过拟合情况。
+
+
+
+/home/fyl/workspace_fyl/GQ-light/exps_light/20260518_101654
+faster+d3

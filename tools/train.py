@@ -39,21 +39,23 @@ def main(args, ) -> None:
     
 
 if __name__ == '__main__':
-    #CUDA_VISIBLE_DEVICES=0,1 torchrun --master_port=9909 --nproc_per_node=2 tools/train.py  
+    #CUDA_VISIBLE_DEVICES=2,3 torchrun --master_port=9909 --nproc_per_node=2 tools/train.py  
     
     parser = argparse.ArgumentParser()
     now = datetime.datetime.now()
     time_str = now.strftime("%Y%m%d_%H%M%S")
     # priority 0
-    parser.add_argument('-c', '--config', type=str, default='./configs/gqdetr/gqdetr_r50vd_6x_coco.yml')
+    parser.add_argument('-c', '--config', type=str, default='./configs/gqdetr/gqdetr_fasternet_6x.yml')       #gqdetr_mbLarge_6x
     parser.add_argument('-r', '--resume', type=str, 
                         default='', help='resume from checkpoint')
     parser.add_argument('-t', '--tuning', type=str, default='', help='tuning from checkpoint')
     parser.add_argument('-d', '--device', type=str, help='device',)
-    parser.add_argument('--seed', type=int, default= 0, help='exp reproducibility')     #0
+    parser.add_argument('--seed', type=int, default= 42, help='exp reproducibility')     #0
     parser.add_argument('--use-amp', action='store_true', default=True, help='auto mixed precision training')
-    parser.add_argument('--output-dir', type=str, default=f'/root/fengyulei/exps/{time_str}', help='output directoy')
-    parser.add_argument('--summary-dir', type=str, default=f'/root/fengyulei/exps/{time_str}', help='tensorboard summry')
+    parser.add_argument('--output-dir', type=str, 
+                        default=f'/home/fyl/workspace_fyl/GQ-light/exps_light/{time_str}', help='output directoy')
+    parser.add_argument('--summary-dir', type=str, 
+                        default=f'/home/fyl/workspace_fyl/GQ-light/exps_light/{time_str}', help='tensorboard summry')
     parser.add_argument('--test-only', action='store_true', default=False,)
 
     # priority 1

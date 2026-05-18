@@ -39,6 +39,16 @@ def calculate_model_complexity(model, im_data, orig_size):
     # 计算FLOPs
     flops = FlopCountAnalysis(model_wrapper, im_data)
     
+    """计算模型的FLOPs、参数和激活值"""
+
+    model.eval()
+
+    # fvcore 要求传入 nn.Module，而不是 function
+    inputs = (im_data, orig_size)
+
+    # 计算FLOPs
+    flops = FlopCountAnalysis(model, inputs)
+    
     # 计算激活值
     acts = ActivationCountAnalysis(model_wrapper, im_data)
     
@@ -142,9 +152,9 @@ def main(args, ):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--config', type=str, default='../configs/rtdetr/rtdetr_r50vd_6x_coco.yml')
-    parser.add_argument('-r', '--resume', type=str, default='/root/autodl-tmp/exps/20250923_205026_CGA/best.pth')
-    parser.add_argument('-f', '--im-file', type=str, default='../00002/00002.jpg')
+    parser.add_argument('-c', '--config', type=str, default='../configs/gqdetr/gqdetr_r18vd_6x_coco.yml')
+    parser.add_argument('-r', '--resume', type=str, default='/home/fyl/workspace_fyl/GQ-light/exps_light/20251212_050003_UAVSwarm_GQDETR/best.pth')
+    parser.add_argument('-f', '--im-file', type=str, default='../test_scene/00002.jpg')
     parser.add_argument('-d', '--device', type=str, default='cuda:0')      #cpu
     args = parser.parse_args()
     main(args)
