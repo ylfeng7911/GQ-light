@@ -29,7 +29,7 @@ from typing import List, Optional
 
 from .common import FrozenBatchNorm2d
 from ...core import register
-
+from ...zoo.rtdetr.modules import MultiKernelPerception
 
 __all__ = ["FasterNet", "FasterNetBlock"]
 
@@ -359,18 +359,20 @@ class FasterNet(nn.Module):
                 # Downsample between stages.
                 # [B, C, H, W] -> [B, 2C, H/2, W/2]
                 self.downsamples.append(
-                    nn.Sequential(
-                        nn.Conv2d(
-                            cur_dim,
-                            cur_dim * 2,
-                            kernel_size=2,
-                            stride=2,
-                            bias=False,
-                        ),
+                    nn.Sequential(nn.Conv2d(cur_dim,cur_dim * 2,kernel_size=2,stride=2,bias=False,),
                         nn.BatchNorm2d(cur_dim * 2),
                         act_layer(),
                     )
                 )
+                
+                # 最后下采样模块的改进
+                # self.downsamples.append(
+                #     nn.Sequential(MultiKernelPerception(cur_dim,cur_dim * 2),
+                #         nn.BatchNorm2d(cur_dim * 2),
+                #         act_layer(),
+                #     )
+                # )
+                
                 cur_dim *= 2
 
         self.out_channels = [
@@ -470,8 +472,17 @@ if __name__ == "__main__":
     ys = model(x)
     for i, y in enumerate(ys):
         print(i, y.shape)
-        
+    
+    mo1 = MultiKernelPerception(256)
+    mo2 = FCM(256, 256)
+    x = torch.randn(2,256,80,80)
+    print(mo1(x).shape)
+    print(mo2(x).shape)
         
         
 # 整体模型结构：stem + Stage*4      （每个stage由多个block堆叠而成，数量为[1,2,8,2]）不同stage之间用downsample卷积连接
 # 链路中的stem和downsample实现都很简洁，一个卷积层
+
+
+
+

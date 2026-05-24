@@ -1,5 +1,7 @@
 /exps_light/
 /exports/
+/references/feature_token_vis/
+/references/*.jpg
 *.pth
 *.pt
 *.onnx 

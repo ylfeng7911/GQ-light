@@ -631,6 +631,134 @@ class CrossScaleAlignFuseONNX(nn.Module):
 
 
 
+
+#特征融合模块，相当于一个conv . 计算量是一个普通3x3卷积的2/9.
+#设计思路：
+# 1.普通3x3卷积很昂贵，且很多参数、通道是冗余的，可以用DW卷积+1x1卷积的结构替代。（两者分别代表空间、通道交互）
+# 2.空间交互一次，通道交互一次，空间交互一次，通道交互一次...
+# 3.多尺度交互（感受野扩大）
+# 4.将“通道信息”和“空间信息”串联交互
+class MultiKernelPerception(nn.Module):
+    def __init__(self, dim, dim_out):
+        super().__init__()
+        self.conv1 = nn.Conv2d(dim, dim, 3, 1, 1, groups=dim)       # DW卷积，无通道间的交互
+        self.conv2 = ConvNormLayer(dim, dim, 1, 1)                     # 1x1卷积，仅通道间交互
+        self.conv3 = nn.Conv2d(dim, dim, 5, 1, 2, groups=dim)
+        self.conv4 = ConvNormLayer(dim, dim, 1, 1)
+        self.conv5 = nn.Conv2d(dim, dim, 7, 2, 3, groups=dim)
+        self.conv6 = ConvNormLayer(dim, dim_out, 1, 1)
+        
+
+    def forward(self, x):
+        x1 = self.conv1(x)
+        x2 = self.conv2(x1)
+        x3 = self.conv3(x2)
+        x4 = self.conv4(x3)
+        x5 = self.conv5(x4)
+        # x6 = x5 + x
+        x6 = self.conv6(x5)
+        return x6
+
+
+
+class Channel(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.dwconv = self.dconv = nn.Conv2d(dim, dim, 3, 1, 1, groups=dim)
+        self.Apt = nn.AdaptiveAvgPool2d(1)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        x2 = self.dwconv(x)
+        x5 = self.Apt(x2)
+        x6 = self.sigmoid(x5)
+
+        return x6
+
+class Spatial(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.conv1 = nn.Conv2d(dim, 1, 1, 1)
+        self.bn = nn.BatchNorm2d(1)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        x1 = self.conv1(x)
+        x5 = self.bn(x1)
+        x6 = self.sigmoid(x5)
+
+        return x6
+    
+#特征融合模块，相当于更复杂的conv。输入输出同尺度。  参数量、计算量大约为3x3卷积的三分之一。
+# 设计思路：
+# 1.特征图分为两路：空间支路 + 通道支路
+# 2.每一路各自求一个权重调制到另外一条路，结果加权和
+# 3.CV领域做图像处理，无非空间信息和通道信息，把两者做并联的结构。
+class FCM(nn.Module):
+    def __init__(self, dim, dim_out):
+        super().__init__()
+        self.one = dim // 4
+        self.two = dim - dim // 4
+        self.conv1 = ConvNormLayer(dim // 4, dim // 4, 3, 1, 1)
+        self.conv12 = ConvNormLayer(dim // 4, dim // 4, 3, 1, 1)
+        self.conv123 = ConvNormLayer(dim // 4, dim, 1, 1)                    #3x3卷积分支（空间特征强）
+
+        self.conv2 = ConvNormLayer(dim - dim // 4, dim, 1, 1)                #1x1卷积分支（空间特征弱）
+        self.conv3 = ConvNormLayer(dim, dim_out, 1, 1)
+        self.spatial = Spatial(dim)             #得到每个空间点的权重（1x1卷积）
+        self.channel = Channel(dim)             #得到每个通道的权重（平均池化）
+
+    def forward(self, x):
+        x1, x2 = torch.split(x, [self.one, self.two], dim=1)
+        x3 = self.conv1(x1)
+        x3 = self.conv12(x3)
+        x3 = self.conv123(x3)               #空间特征强
+        x4 = self.conv2(x2)                 #空间特征弱
+        x33 = self.spatial(x4) * x3         #用空间强的求空间权重
+        x44 = self.channel(x3) * x4         #用空间弱的求通道权重
+        x5 = x33 + x44
+        x5 = self.conv3(x5)
+        return x5
+    
+    
+    
+class FCM2(nn.Module):
+    def __init__(self, dim, dim_out):
+        super().__init__()
+        self.one = dim - dim // 4
+        self.two = dim // 4
+        self.conv1 = ConvNormLayer(dim - dim // 4, dim - dim // 4, 3, 1, 1)
+        self.conv12 = ConvNormLayer(dim - dim // 4, dim - dim // 4, 3, 1, 1)
+        self.conv123 = ConvNormLayer(dim - dim // 4, dim, 1, 1)
+
+        self.conv2 = ConvNormLayer(dim // 4, dim, 1, 1)
+        self.spatial = Spatial(dim)
+        self.channel = Channel(dim)
+        self.conv3 = ConvNormLayer(dim, dim_out, 1, 1)
+
+    def forward(self, x):
+        x1, x2 = torch.split(x, [self.one, self.two], dim=1)
+        x3 = self.conv1(x1)
+        x3 = self.conv12(x3)
+        x3 = self.conv123(x3)
+        x4 = self.conv2(x2)
+        x33 = self.spatial(x4) * x3
+        x44 = self.channel(x3) * x4
+        x5 = x33 + x44
+        x5 = self.conv3(x5)
+        return x5
+
+
+
+
+
+
+
+
+
+
+
+
 # --- 计算参数量的函数 ---
 def count_parameters(model):
     """计算模型的总参数量"""

@@ -234,6 +234,7 @@ class TransformerDecoderLayer(nn.Module):
         tgt2, _ = self.self_attn(q, k, value=tgt, attn_mask=attn_mask)
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
+        
         # cross attention
         tgt2 = self.cross_attn(\
             self.with_pos_embed(tgt, query_pos_embed), 
@@ -592,8 +593,8 @@ class RTDETRTransformer(nn.Module):
 
         output_memory = self.enc_output(memory) #线性层 [b,sum_hw,c]
         #编码器的输出预测
-        enc_outputs_class = self.enc_score_head(output_memory)  #线性层预测类别
-        enc_outputs_coord_unact = self.enc_bbox_head(output_memory) + anchors   #MLP预测坐标偏移    anchors相当于参考点
+        enc_outputs_class = self.enc_score_head(output_memory)  # 线性层预测类别
+        enc_outputs_coord_unact = self.enc_bbox_head(output_memory) + anchors   # MLP预测坐标偏移    anchors相当于参考点
 
         #根据类别预测值topk筛选
         _, topk_ind = torch.topk(enc_outputs_class.max(-1).values, self.num_queries, dim=1)     #[bs,sum_hw,2]->[bs,sum_hw]->[bs,300] 

@@ -43,7 +43,7 @@ RTDETRTransformer:
   hidden_dim: 256
   num_levels: 3       #3
 
-  num_layers: 6
+  num_layers: 3
   num_queries: 300
 
   num_denoising: 100
@@ -52,7 +52,7 @@ RTDETRTransformer:
 
   eval_idx: -1
   GQI_enable: True    #若GQI和CSAF均不enable，则模型等于RT-DETR
-  GQI_num_layers: 3     #[0,6]
+  GQI_num_layers: 2     #[0,6]
   CSAF_enable: True
   max_feat_c: 128        #最大特征图的通道数
   ifexport: False

@@ -45,7 +45,7 @@ if __name__ == '__main__':
     now = datetime.datetime.now()
     time_str = now.strftime("%Y%m%d_%H%M%S")
     # priority 0
-    parser.add_argument('-c', '--config', type=str, default='./configs/gqdetr/gqdetr_fasternet_6x.yml')       #gqdetr_mbLarge_6x
+    parser.add_argument('-c', '--config', type=str, default='./configs/gqdetr/gqdetr_r18vd_6x_coco.yml')       #gqdetr_mbLarge_6x
     parser.add_argument('-r', '--resume', type=str, 
                         default='', help='resume from checkpoint')
     parser.add_argument('-t', '--tuning', type=str, default='', help='tuning from checkpoint')

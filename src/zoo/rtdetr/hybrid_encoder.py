@@ -12,11 +12,172 @@ from .utils import get_activation
 
 from ...core import register
 
-from .modules import HLFFF,ConvNormLayer,DSConv
+from .modules import HLFFF,ConvNormLayer,DSConv, FCM, MultiKernelPerception
 
 
 __all__ = ['HybridEncoder']
 
+
+
+def _save_feat_token_heatmaps(
+    feats,
+    sample,
+    stage_name,
+    save_dir="./feature_token_vis",
+    names=None,
+    batch_idx=0,
+    step=None,
+    alpha_img=0.55,
+    alpha_heat=0.45,
+):
+    """
+    将多尺度特征图的 token 响应以 heatmap 形式叠加到原图灰度图上保存。
+
+    Args:
+        feats: list[Tensor]
+            多尺度特征图列表，每个元素 shape 为 [B, C, H, W]。
+            例如：
+                FPN前:  [C2, C3, C4, C5]
+                FPN后:  [P2, P3, P4, P5]
+                PAN后:  [N2, N3, N4, N5]
+
+        sample: Tensor or NestedTensor
+            原图输入，通常 shape 为 [B, C, H, W]。
+            如果是 RT-DETR / DETR 中的 NestedTensor，也兼容 sample.tensors。
+
+        stage_name: str
+            当前阶段名称，例如：
+                "before_fpn"
+                "after_fpn"
+                "after_pan"
+                "after_asff"
+
+        save_dir: str
+            保存目录。
+
+        names: list[str]
+            每个尺度的名字，例如 ["C2", "C3", "C4", "C5"]。
+
+        batch_idx: int
+            可视化 batch 中第几个样本。
+
+        step: int or str or None
+            可选，用于区分不同 iteration / epoch。
+
+        alpha_img: float
+            原图灰度图叠加权重。
+
+        alpha_heat: float
+            heatmap 叠加权重。
+    """
+    import os
+    import cv2
+    import numpy as np
+
+    os.makedirs(save_dir, exist_ok=True)
+
+    if names is None:
+        names = [f"L{i}" for i in range(len(feats))]
+
+    def _to_uint8_image(x, b=0):
+        """
+        将原图 tensor 转为 uint8 RGB 图像。
+
+        输入:
+            x: Tensor [B, C, H, W] 或 NestedTensor，支持 x.tensors
+        输出:
+            img_rgb: np.ndarray [H, W, 3], uint8, RGB 格式
+        """
+        img = x[b]
+
+        img = img.detach().float().cpu()
+
+        # [1, H, W] -> [3, H, W]
+        if img.shape[0] == 1:
+            img = img.repeat(3, 1, 1)
+
+        # [C, H, W] -> [H, W, C]
+        img = img.permute(1, 2, 0).numpy()
+
+        # min-max normalize 到 [0, 255]
+        img = img - img.min()
+        img = img / (img.max() + 1e-6)
+        img = (img * 255).astype(np.uint8)
+
+        return img
+
+    def _normalize_heatmap(heatmap):
+        heatmap = heatmap.astype(np.float32)
+        heatmap = heatmap - heatmap.min()
+        heatmap = heatmap / (heatmap.max() + 1e-6)
+        return heatmap
+
+    with torch.no_grad():
+        # -----------------------------
+        # 1. 处理原图
+        # -----------------------------
+        img_rgb = _to_uint8_image(sample, batch_idx)      # [H, W, 3], RGB
+        img_h, img_w = img_rgb.shape[:2]
+
+        # 转为灰度图，再转回 3 通道，便于和 heatmap 叠加
+        img_gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)          # [H, W]
+        img_gray_3c = cv2.cvtColor(img_gray, cv2.COLOR_GRAY2BGR)      # [H, W, 3], BGR
+
+        # 保存原图灰度图
+        if step is None:
+            gray_name = f"{stage_name}_input_gray_b{batch_idx}.png"
+        else:
+            gray_name = f"step{step}_{stage_name}_input_gray_b{batch_idx}.png"
+
+        cv2.imwrite(os.path.join(save_dir, gray_name), img_gray)
+
+        # -----------------------------
+        # 2. 逐尺度生成 token heatmap 并叠加到原图上
+        # -----------------------------
+        for i, feat in enumerate(feats):
+            cur = feat.detach().float()
+
+            # cur: [B, C, H, W] -> [C, H, W]
+            cur = cur[batch_idx]
+
+            # 每个空间位置视为一个 token
+            # 对通道维聚合，得到 token 响应强度图 [H, W]
+            heatmap = cur.abs().mean(dim=0)       # [H, W]        =====================================
+            # heatmap = F.relu(cur).mean(dim=0)
+
+            heatmap = heatmap.cpu().numpy()
+            heatmap = _normalize_heatmap(heatmap)
+
+            # [H_feat, W_feat] -> [H_img, W_img]
+            heatmap_u8 = (heatmap * 255).astype(np.uint8)
+            heatmap_u8 = cv2.resize(heatmap_u8, (img_w, img_h), interpolation=cv2.INTER_LINEAR)
+
+            # cv2 构造彩色 heatmap，输出为 BGR
+            heatmap_color = cv2.applyColorMap(heatmap_u8, cv2.COLORMAP_JET)
+
+            # heatmap 叠加到原图灰度图上
+            overlay = cv2.addWeighted(img_gray_3c, alpha_img, heatmap_color, alpha_heat, 0.0)
+
+            if step is None:
+                heat_name = f"{stage_name}_{names[i]}_heat_b{batch_idx}.png"
+                overlay_name = f"{stage_name}_{names[i]}_overlay_b{batch_idx}.png"
+            else:
+                heat_name = f"step{step}_{stage_name}_{names[i]}_heat_b{batch_idx}.png"
+                overlay_name = f"step{step}_{stage_name}_{names[i]}_overlay_b{batch_idx}.png"
+
+            # 保存单独 heatmap
+            cv2.imwrite(
+                os.path.join(save_dir, heat_name),
+                heatmap_u8,
+            )
+
+            # 保存叠加图
+            cv2.imwrite(
+                os.path.join(save_dir, overlay_name),
+                overlay,
+            )
+            
+            
 class ChannelAttention(nn.Module):
     """
     通道注意力
@@ -77,23 +238,6 @@ class SpatialAttention(nn.Module):
         out = self.sigmoid(out)                     #[b,1,h,w]
         out = self.dropout(out)  
         return out * x                          #每个空间位置缩放[b,c,h,w]
-
-
-class CBAM(nn.Module):
-    """
-    CBAM混合注意力机制.作用：让模型知道特征图的哪些通道、区域是 重要/不重要，从而放大/缩小。
-    """
-
-    def __init__(self, in_channels, ratio=16, kernel_size=3, dropout=0.05):
-        super(CBAM, self).__init__()
-        self.channelattention = ChannelAttention(in_channels, ratio=ratio)
-        self.spatialattention = SpatialAttention(kernel_size=kernel_size)
-        self.dropout = nn.Dropout(p=dropout)        #添加正则化
-          
-    def forward(self, x):
-        x = self.channelattention(x)
-        x = self.spatialattention(x)
-        return self.dropout(x)
 
 
 class SKConv(nn.Module):
@@ -288,16 +432,19 @@ class CSPRepLayer(nn.Module):       #H/W不变   特征融合模块
                  in_channels,               #512
                  out_channels,              #256
                  num_blocks=3,      
-                 expansion=1.0,
+                 expansion=1.0,             #r18时是0.5
                  bias=None,
                  act="silu"):
         super(CSPRepLayer, self).__init__()
         hidden_channels = int(out_channels * expansion)
         self.conv1 = ConvNormLayer(in_channels, hidden_channels, 1, 1, bias=bias, act=act)
         self.conv2 = ConvNormLayer(in_channels, hidden_channels, 1, 1, bias=bias, act=act)
-        self.bottlenecks = nn.Sequential(*[
-            RepVggBlock(hidden_channels, hidden_channels, act=act) for _ in range(num_blocks)   #特征融合模块
-        ])
+        # 特征融合模块
+        self.bottlenecks = nn.Sequential(*[RepVggBlock(hidden_channels, hidden_channels, act=act) for _ in range(num_blocks)])   
+        
+        # self.bottlenecks = nn.Sequential(*[FCM(hidden_channels, hidden_channels) for _ in range(num_blocks)])   #特征融合模块
+        
+        
         if hidden_channels != out_channels:
             self.conv3 = ConvNormLayer(hidden_channels, out_channels, 1, 1, bias=bias, act=act)
         else:
@@ -392,7 +539,7 @@ class HybridEncoder(nn.Module):
                  use_encoder_idx=[2],
                  num_encoder_layers=1,
                  pe_temperature=10000,
-                 expansion=1.0,
+                 expansion=1.0,             # r18使用0.5
                  depth_mult=1.0,
                  act='silu',
                  eval_spatial_size=None, 
@@ -407,6 +554,10 @@ class HybridEncoder(nn.Module):
         self.eval_spatial_size = eval_spatial_size        
         self.out_channels = [hidden_dim for _ in range(len(in_channels))]
         self.out_strides = feat_strides
+        
+        self.save_token_heatmap = True
+        self.token_heatmap_dir = "./feature_token_vis"
+        self.token_heatmap_step = "vis"
         
         
         # channel projection    编码器入口的映射是为了调整特征图的通道数，这里max图本来就256的，可以不用映射
@@ -489,9 +640,21 @@ class HybridEncoder(nn.Module):
 
         return torch.concat([out_w.sin(), out_w.cos(), out_h.sin(), out_h.cos()], dim=1)[None, :, :]
 
-    def forward(self, feats):
+    def forward(self, feats, samples=None):
         assert len(feats) == len(self.in_channels)
         proj_feats = [self.input_proj[i](feat) for i, feat in enumerate(feats)]     #1x1卷积--> c = 256  顺序从下往上
+        
+        # FPN前特征可视化
+        if getattr(self, "save_token_heatmap", False):
+            _save_feat_token_heatmaps(
+                proj_feats,
+                samples, 
+                stage_name="before_fpn",
+                save_dir=getattr(self, "token_heatmap_dir", "./feature_token_vis"),
+                names=["C3", "C4", "C5"],
+                step=getattr(self, "token_heatmap_step", None),
+            )
+            
         # encoder   最高级特征图 应用编码器（交互语义信息）
         if self.num_encoder_layers > 0:
             for i, enc_ind in enumerate(self.use_encoder_idx):  #0,2
@@ -507,6 +670,17 @@ class HybridEncoder(nn.Module):
                 memory :torch.Tensor = self.encoder[i](src_flatten, pos_embed=pos_embed)
                 proj_feats[enc_ind] = memory.permute(0, 2, 1).reshape(-1, self.hidden_dim, h, w).contiguous()   #[b,c,h,w]
 
+        # encoder后特征可视化
+        if getattr(self, "save_token_heatmap", False):
+            _save_feat_token_heatmaps(
+                [proj_feats[-1]],
+                samples, 
+                stage_name="after_encoder",
+                save_dir=getattr(self, "token_heatmap_dir", "./feature_token_vis"),
+                names=["E5"],
+                step=getattr(self, "token_heatmap_step", None),
+            )
+        
 
         # broadcasting and fusion
         # FPN：inner_outs变为：从下往上3层融合特征图(代码逻辑很绕，结合论文图来看)，FPN网络是自顶向下的，融合方式是concat+映射
@@ -521,6 +695,18 @@ class HybridEncoder(nn.Module):
             inner_outs.insert(0, inner_out)        
 
         
+        # FPN后特征可视化
+        if getattr(self, "save_token_heatmap", False):
+            _save_feat_token_heatmaps(
+                inner_outs,
+                samples, 
+                stage_name="after_fpn",
+                save_dir=getattr(self, "token_heatmap_dir", "./feature_token_vis"),
+                names=["P3", "P4", "P5"],
+                step=getattr(self, "token_heatmap_step", None),
+            )
+        
+        
         # PAN：outs是：E1和每一次PAN融合后的结果（尺度从下往上)      [b,256,h,w]
         outs = [inner_outs[0]]
         for idx in range(len(self.in_channels) - 1):        #0,1           理解：下层（论文中）经过下采样后和上层融合
@@ -530,6 +716,18 @@ class HybridEncoder(nn.Module):
             out = self.pan_blocks[idx](torch.concat([downsample_feat, feat_height], dim=1)) #concat再减半C
             outs.append(out)
 
+        
+        # PAN后特征可视化
+        if getattr(self, "save_token_heatmap", False):
+            _save_feat_token_heatmaps(
+                outs,
+                samples, 
+                stage_name="after_pan",
+                save_dir=getattr(self, "token_heatmap_dir", "./feature_token_vis"),
+                names=["N3", "N4", "N5"],
+                step=getattr(self, "token_heatmap_step", None),
+            )
+            
 
         return outs            #尺度从大到小
 

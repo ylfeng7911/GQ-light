@@ -8,6 +8,73 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from src.core import YAMLConfig
 
+
+
+def print_decoder_submodule_params(model, max_depth=2, show_zero=False):
+    """
+    统计 decoder 内部各子模块的参数量。
+
+    Args:
+        model: RTDETR / GQ-DETR model
+        max_depth:
+            1 表示统计 decoder 的一级子模块，例如:
+                decoder.decoder
+                decoder.Fuse
+                decoder.input_proj ...
+            2 表示统计 decoder 的二级子模块，例如:
+                decoder.decoder.layers
+                decoder.decoder.layers.0
+                decoder.Fuse.xxx
+        show_zero: 是否打印参数量为 0 的模块
+    """
+
+    print("\n===== Decoder Submodule Parameter Statistics =====")
+
+    if not hasattr(model, "decoder"):
+        print("model has no attribute: decoder")
+        return
+
+    decoder = model.decoder
+
+    # decoder 总参数量
+    decoder_total = sum(p.numel() for p in decoder.parameters())
+
+    # 统计 decoder 下不同层级的参数
+    group_params = defaultdict(int)
+
+    for name, p in decoder.named_parameters():
+        n = p.numel()
+
+        # name 是相对于 decoder 的名字，例如:
+        #   decoder.layers.0.self_attn.in_proj_weight
+        #   Fuse.xxx.weight
+        parts = name.split(".")
+
+        if len(parts) == 0:
+            key = "decoder"
+        else:
+            # 取 max_depth 层作为分组 key
+            key = ".".join(parts[:max_depth])
+
+        group_params[key] += n
+
+    # 排序打印
+    sorted_items = sorted(group_params.items(), key=lambda kv: kv[1], reverse=True)
+
+    print(f"{'Submodule':50s} {'Params':>15s} {'Ratio in decoder':>18s}")
+    print("-" * 90)
+
+    for key, n in sorted_items:
+        if n == 0 and not show_zero:
+            continue
+        ratio = n / decoder_total * 100 if decoder_total > 0 else 0
+        print(f"decoder.{key:42s} {n/1e6:12.3f} M {ratio:15.2f}%")
+
+    print("-" * 90)
+    print(f"{'decoder total':50s} {decoder_total/1e6:12.3f} M {100.00:15.2f}%")
+    
+    
+    
 def print_module_params(model):
     total_params = 0
     # 四个分组
@@ -69,7 +136,8 @@ def _get_inclusive(flops_by_module: dict, key: str) -> float:
     return float(flops_by_module.get(key, 0.0))
 
 def print_4part_gflops_inclusive(model, input_shape=(1,3,640,640), device="cuda:0", top_other=15):
-    model.eval().to(device)
+    # model.eval().to(device)
+    model.deploy().to(device)
     x = torch.randn(*input_shape, device=device)
 
     analyzer = FlopCountAnalysis(model, x)
@@ -161,5 +229,11 @@ if __name__ == "__main__":
     # 计算分组参数量
     print_module_params(model)
     
-    # 计算分组参数量
+    # 更详细统计 decoder 内部参数量
+    print_decoder_submodule_params(model, max_depth=2)
+    
+    # 计算分组计算量
     print_4part_gflops_inclusive(model, input_shape=(1,3,640,640), device="cuda:0")
+    #13.7M, 38G
+    #17.6M, 42G
+    #22.8M, 52G

@@ -83,7 +83,7 @@ def profile_stats(
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--config', type=str, default='/home/fyl/workspace_fyl/GQ-light/configs/gqdetr/gqdetr_fasternet_6x.yml')
+    parser.add_argument('-c', '--config', type=str, default='/home/fyl/workspace_fyl/GQ-light/configs/gqdetr/gqdetr_r18vd_6x_coco.yml')
     parser.add_argument('-d', '--device', type=str, default='cuda:0', help='device',)
     args = parser.parse_args()
 
@@ -91,3 +91,5 @@ if __name__ == "__main__":
     model = cfg.model.to(args.device)
 
     profile_stats(model, verbose=True)
+
+

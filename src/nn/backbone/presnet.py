@@ -3,16 +3,53 @@
 import torch
 import torch.nn as nn 
 import torch.nn.functional as F 
+from torch import Tensor
 
 from collections import OrderedDict
 
 from .common import get_activation, FrozenBatchNorm2d
 
 from ...core import register
-
+from ...zoo.rtdetr.modules import MultiKernelPerception, FCM, FCM2
 
 __all__ = ['PResNet']
 
+
+class PartialConv(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        n_div: int = 4,
+        kernel_size: int = 3
+    ):
+        super().__init__()
+
+        self.dim_conv3 = dim // n_div                   # 只有1/4通道参与卷积（但这是全参数的卷积）
+        self.dim_untouched = dim - self.dim_conv3
+
+        self.partial_conv3 = nn.Conv2d(
+            self.dim_conv3,
+            self.dim_conv3,
+            kernel_size=kernel_size,
+            stride=1,
+            padding=kernel_size // 2,
+            bias=False,
+        )
+
+        self.forward = self.forward_split_cat
+
+    def forward_split_cat(self, x: Tensor) -> Tensor:
+        """
+        For training and inference.
+        更安全，默认使用这个。
+        """
+        x1, x2 = torch.split(
+            x, [self.dim_conv3, self.dim_untouched], dim=1
+        )
+        x1 = self.partial_conv3(x1)
+        x = torch.cat((x1, x2), dim=1)
+        return x
+    
 
 ResNet_cfg = {
     18: [2, 2, 2, 2],
@@ -32,7 +69,7 @@ donwload_url = {
 
 
 class ConvNormLayer(nn.Module):
-    def __init__(self, ch_in, ch_out, kernel_size, stride, padding=None, bias=False, act=None):
+    def __init__(self, ch_in, ch_out, kernel_size, stride, padding=None, bias=False, act=None, groups=1):
         super().__init__()
         self.conv = nn.Conv2d(
             ch_in, 
@@ -40,7 +77,8 @@ class ConvNormLayer(nn.Module):
             kernel_size, 
             stride, 
             padding=(kernel_size-1)//2 if padding is None else padding, 
-            bias=bias)
+            bias=bias,
+            groups=groups)
         self.norm = nn.BatchNorm2d(ch_out)
         self.act = get_activation(act) 
 
@@ -53,7 +91,7 @@ class BasicBlock(nn.Module):
 
     # stride：只有2,3,4Stage的第一个bb=2，其余为1；
     # shortcut：第二个bb开始做
-    def __init__(self, ch_in, ch_out, stride, shortcut, act='relu', variant='b'):   
+    def __init__(self, ch_in, ch_out, stride, shortcut, act='relu', variant='b', fcm1 = True):   
         super().__init__()
 
         self.shortcut = shortcut
@@ -69,6 +107,18 @@ class BasicBlock(nn.Module):
 
         self.branch2a = ConvNormLayer(ch_in, ch_out, 3, stride, act=act)
         self.branch2b = ConvNormLayer(ch_out, ch_out, 3, 1, act=None)
+        # 以下改进效果不是很好。
+        # self.branch2a = nn.Sequential(ConvNormLayer(ch_in, ch_in, 3, stride, act=act, groups=ch_in),
+        #                                ConvNormLayer(ch_in, ch_out, 1, 1, act=act))
+        # self.branch2b = FCM(ch_out, ch_out) if fcm1 else FCM2(ch_out, ch_out)
+        
+        # 改小K + faster+MB风格改进
+        # self.branch2a = nn.Sequential(ConvNormLayer(ch_in, ch_in, 3, stride, act=act, groups=ch_in),
+        #                                ConvNormLayer(ch_in, ch_out, 1, 1, act=act))
+        # self.branch2b = nn.Sequential(PartialConv(ch_out),
+        #                               ConvNormLayer(ch_out, ch_out, 1, 1, act=act))
+        
+        
         self.act = nn.Identity() if act is None else get_activation(act) 
 
 
@@ -132,7 +182,7 @@ class BottleNeck(nn.Module):        #3个卷积 + 残差，  通道数x4
 
 
 class Blocks(nn.Module):    #多个bottleNeck的堆叠
-    def __init__(self, block, ch_in, ch_out, count, stage_num, act='relu', variant='b'):
+    def __init__(self, block, ch_in, ch_out, count, stage_num, act='relu', variant='b', fcm1 = True):
         super().__init__()
 
         self.blocks = nn.ModuleList()
@@ -144,7 +194,8 @@ class Blocks(nn.Module):    #多个bottleNeck的堆叠
                     stride=2 if i == 0 and stage_num != 2 else 1,       #在2,3,4 Stage的第一个bb做下采样
                     shortcut=False if i == 0 else True,                 #第二个bb开始做跳跃连接
                     variant=variant,
-                    act=act)
+                    act=act,
+                    fcm1=fcm1)
             )
 
             if i == 0:
@@ -185,6 +236,18 @@ class PResNet(nn.Module):
         self.conv1 = nn.Sequential(OrderedDict([
             (name, ConvNormLayer(cin, cout, k, s, act=act)) for cin, cout, k, s, name in conv_def   #conv1:conv1_1, 1_2, 1_3
         ]))
+        
+        # MB风格
+        # self.conv1 = nn.Sequential(ConvNormLayer(3, ch_in // 2, 3, 2, act=act),
+        #                            ConvNormLayer(ch_in // 2, ch_in // 2, 3, 1, act=act, groups = ch_in // 2),
+        #                            ConvNormLayer(ch_in // 2, ch_in, 1, 1, act=act),
+        #                            )
+        # fasternet风格
+        # self.conv1 = nn.Sequential(ConvNormLayer(3, ch_in//2, 3, 2, act=act),
+        #                             PartialConv(ch_in//2),
+        #                             ConvNormLayer(ch_in//2, ch_in, 1, 1, act=act),                   
+        #                             )
+    
 
         ch_out_list = [64, 128, 256, 512]
         block = BottleNeck if depth >= 50 else BasicBlock
@@ -195,8 +258,9 @@ class PResNet(nn.Module):
         self.res_layers = nn.ModuleList()   # 构建4个stage子模块
         for i in range(num_stages):     
             stage_num = i + 2           # 2,3,4,5
+            fcm1 = True if i % 2==0 else False      #T, F, T, F 
             self.res_layers.append(
-                Blocks(block, ch_in, ch_out_list[i], block_nums[i], stage_num, act=act, variant=variant)
+                Blocks(block, ch_in, ch_out_list[i], block_nums[i], stage_num, act=act, variant=variant, fcm1 = fcm1)
             )
             ch_in = _out_channels[i]
 

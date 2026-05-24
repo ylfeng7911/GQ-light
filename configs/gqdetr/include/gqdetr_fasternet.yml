@@ -16,7 +16,7 @@ RTDETR:
   
 
 FasterNet:
-  name: t1
+  name: t1    #t1
   return_idx: [0, 1, 2, 3]
   expand_ratio: 2
   pconv_n_div: 4
@@ -28,7 +28,7 @@ FasterNet:
 
 
 HybridEncoder:
-  in_channels: [128, 256, 512]      #[128, 256, 512]   
+  in_channels: [128, 256, 512]   #t1:[128, 256, 512]    t0:[80, 160, 320]
   feat_strides: [8, 16, 32]           #4
 
   # intra
@@ -64,8 +64,8 @@ RTDETRTransformer:
   GQI_enable: True    #若GQI和CSAF均不enable，则模型等于RT-DETR
   GQI_num_layers: 2     #[0,6]
   CSAF_enable: True
-  max_feat_c: 64        #最大特征图的通道数
-  ifexport: False
+  max_feat_c: 64        #最大特征图的通道数 t1:64  t0:40
+  ifexport: True
 
 
 RTDETRPostProcessor:
