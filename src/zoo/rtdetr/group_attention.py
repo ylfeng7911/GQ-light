@@ -119,7 +119,7 @@ class MultiScaleGatedConv1d(nn.Module):
 
 
 class GatedResidualBlock1d(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim=256):
         super().__init__()
         self.gated_conv = MultiScaleGatedConv1d(dim)
         self.norm = nn.LayerNorm(dim)

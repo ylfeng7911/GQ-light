@@ -20,6 +20,8 @@ from .group_attention import grouped_self_conv,grouped_self_con_one_stage,GatedR
 from .modules import MSDeformableAttention,CrossScaleAlignFuse,CrossScaleAlignFuseONNX
 from ...core import register
 
+from .HFP import HFP
+
 
 __all__ = ['RTDETRTransformer']
 
@@ -160,6 +162,123 @@ def visualize_groups_on_image(
     _draw_and_save(new_labels, suffix="stage2")
     
 
+
+
+def _save_feat_token_heatmaps(
+    feats,
+    sample,
+    stage_name,
+    save_dir="./feature_token_vis",
+    names=None,
+    batch_idx=0,
+    step=None,
+    alpha_img=0.55,
+    alpha_heat=0.45,
+):
+    os.makedirs(save_dir, exist_ok=True)
+
+    if names is None:
+        names = [f"L{i}" for i in range(len(feats))]
+
+    def _to_uint8_image(x, b=0):
+        """
+        将原图 tensor 转为 uint8 RGB 图像。
+
+        输入:
+            x: Tensor [B, C, H, W] 或 NestedTensor，支持 x.tensors
+        输出:
+            img_rgb: np.ndarray [H, W, 3], uint8, RGB 格式
+        """
+        img = x[b]
+
+        img = img.detach().float().cpu()
+
+        # [1, H, W] -> [3, H, W]
+        if img.shape[0] == 1:
+            img = img.repeat(3, 1, 1)
+
+        # [C, H, W] -> [H, W, C]
+        img = img.permute(1, 2, 0).numpy()
+
+        # min-max normalize 到 [0, 255]
+        img = img - img.min()
+        img = img / (img.max() + 1e-6)
+        img = (img * 255).astype(np.uint8)
+
+        return img
+
+    def _normalize_heatmap(heatmap):
+        heatmap = heatmap.astype(np.float32)
+        heatmap = heatmap - heatmap.min()
+        heatmap = heatmap / (heatmap.max() + 1e-6)
+        return heatmap
+
+    with torch.no_grad():
+        # -----------------------------
+        # 1. 处理原图
+        # -----------------------------
+        img_rgb = _to_uint8_image(sample, batch_idx)      # [H, W, 3], RGB
+        img_h, img_w = img_rgb.shape[:2]
+
+        # 转为灰度图，再转回 3 通道，便于和 heatmap 叠加
+        img_gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)          # [H, W]
+        img_gray_3c = cv2.cvtColor(img_gray, cv2.COLOR_GRAY2BGR)      # [H, W, 3], BGR
+
+        # 保存原图灰度图
+        if step is None:
+            gray_name = f"{stage_name}_input_gray_b{batch_idx}.png"
+        else:
+            gray_name = f"step{step}_{stage_name}_input_gray_b{batch_idx}.png"
+
+        cv2.imwrite(os.path.join(save_dir, gray_name), img_gray)
+
+        # -----------------------------
+        # 2. 逐尺度生成 token heatmap 并叠加到原图上
+        # -----------------------------
+        for i, feat in enumerate(feats):
+            cur = feat.detach().float()
+
+            # cur: [B, C, H, W] -> [C, H, W]
+            cur = cur[batch_idx]
+
+            # 每个空间位置视为一个 token
+            # 对通道维聚合，得到 token 响应强度图 [H, W]
+            heatmap = cur.abs().mean(dim=0)       # [H, W]        =====================================
+            # heatmap = F.relu(cur).mean(dim=0)
+
+            heatmap = heatmap.cpu().numpy()
+            heatmap = _normalize_heatmap(heatmap)
+
+            # [H_feat, W_feat] -> [H_img, W_img]
+            heatmap_u8 = (heatmap * 255).astype(np.uint8)
+            heatmap_u8 = cv2.resize(heatmap_u8, (img_w, img_h), interpolation=cv2.INTER_LINEAR)
+
+            # cv2 构造彩色 heatmap，输出为 BGR
+            heatmap_color = cv2.applyColorMap(heatmap_u8, cv2.COLORMAP_JET)
+
+            # heatmap 叠加到原图灰度图上
+            overlay = cv2.addWeighted(img_gray_3c, alpha_img, heatmap_color, alpha_heat, 0.0)
+
+            if step is None:
+                heat_name = f"{stage_name}_{names[i]}_heat_b{batch_idx}.png"
+                overlay_name = f"{stage_name}_{names[i]}_overlay_b{batch_idx}.png"
+            else:
+                heat_name = f"step{step}_{stage_name}_{names[i]}_heat_b{batch_idx}.png"
+                overlay_name = f"step{step}_{stage_name}_{names[i]}_overlay_b{batch_idx}.png"
+
+            # 保存单独 heatmap
+            cv2.imwrite(
+                os.path.join(save_dir, heat_name),
+                heatmap_u8,
+            )
+
+            # 保存叠加图
+            cv2.imwrite(
+                os.path.join(save_dir, overlay_name),
+                overlay,
+            )
+            
+            
 class MLP(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, num_layers, act='relu'):
         super().__init__()
@@ -410,6 +529,10 @@ class RTDETRTransformer(nn.Module):
         self.num_layers = num_layers
         self.eval_spatial_size = eval_spatial_size
         self.aux_loss = aux_loss
+        # CSAF可视化
+        self.save_token_heatmap = False
+        self.token_heatmap_dir = "./feature_token_vis"
+        self.token_heatmap_step = "vis"
 
         # backbone feature projection
         self._build_input_proj_layer(feat_channels)
@@ -472,6 +595,9 @@ class RTDETRTransformer(nn.Module):
                 self.Fuse = CrossScaleAlignFuseONNX(256)
             else:
                 self.Fuse = CrossScaleAlignFuse(256)
+        
+        # self.HFP = HFP(256)       #代替CSAF
+        
         
         self._reset_parameters()
 
@@ -645,15 +771,39 @@ class RTDETRTransformer(nn.Module):
 
         target, init_ref_points_unact, enc_topk_bboxes, enc_topk_logits = \
             self._get_decoder_input(memory, spatial_shapes, denoising_class, denoising_bbox_unact)  #解码器输入    
+            
+        # CSAF前特征可视化
+        if getattr(self, "save_token_heatmap", False):
+            _save_feat_token_heatmaps(
+                [feat_max, feats[-1]],
+                samples, 
+                stage_name="before_CSAF",
+                save_dir=getattr(self, "token_heatmap_dir", "./feature_token_vis"),
+                names=["H2", "H5"],
+                step=getattr(self, "token_heatmap_step", None),
+            )
 
         # CSAF 极尺度融合
         if self.CSAF_enable:
             feat_max = self.max_feat_proj(feat_max)
             feat_fuse = self.Fuse(feat_max,feats[-1])
+            # feat_fuse = self.HFP(feat_max)
             b,c,h,w = feat_fuse.shape
             memory =  feat_fuse.permute(0, 2, 3, 1).reshape(b, h * w, c)            #[b,hw,c]
             spatial_shapes = [[h,w]]
             level_start_index = 0
+        
+        
+        # CSAF后特征可视化
+        if getattr(self, "save_token_heatmap", False):
+            _save_feat_token_heatmaps(
+                [feat_fuse],
+                samples, 
+                stage_name="after_CSAF",
+                save_dir=getattr(self, "token_heatmap_dir", "./feature_token_vis"),
+                names=["J2"],
+                step=getattr(self, "token_heatmap_step", None),
+            )
             
         # decoder
         out_bboxes, out_logits = self.decoder(                  #[6,b,500,4],[6,b,500,2]

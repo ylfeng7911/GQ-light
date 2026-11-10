@@ -91,7 +91,7 @@ class BasicBlock(nn.Module):
 
     # stride：只有2,3,4Stage的第一个bb=2，其余为1；
     # shortcut：第二个bb开始做
-    def __init__(self, ch_in, ch_out, stride, shortcut, act='relu', variant='b', fcm1 = True):   
+    def __init__(self, ch_in, ch_out, stride, shortcut, act='relu', variant='b', basic_improve = True):   
         super().__init__()
 
         self.shortcut = shortcut
@@ -105,18 +105,16 @@ class BasicBlock(nn.Module):
             else:                                   #如果stride != 2 就不用池化
                 self.short = ConvNormLayer(ch_in, ch_out, 1, stride)        
 
-        self.branch2a = ConvNormLayer(ch_in, ch_out, 3, stride, act=act)
-        self.branch2b = ConvNormLayer(ch_out, ch_out, 3, 1, act=None)
-        # 以下改进效果不是很好。
-        # self.branch2a = nn.Sequential(ConvNormLayer(ch_in, ch_in, 3, stride, act=act, groups=ch_in),
-        #                                ConvNormLayer(ch_in, ch_out, 1, 1, act=act))
-        # self.branch2b = FCM(ch_out, ch_out) if fcm1 else FCM2(ch_out, ch_out)
-        
-        # 改小K + faster+MB风格改进
-        # self.branch2a = nn.Sequential(ConvNormLayer(ch_in, ch_in, 3, stride, act=act, groups=ch_in),
-        #                                ConvNormLayer(ch_in, ch_out, 1, 1, act=act))
-        # self.branch2b = nn.Sequential(PartialConv(ch_out),
-        #                               ConvNormLayer(ch_out, ch_out, 1, 1, act=act))
+        if basic_improve:
+            # faster+MB风格改进
+            self.branch2a = nn.Sequential(ConvNormLayer(ch_in, ch_in, 3, stride, act=act, groups=ch_in),
+                                        ConvNormLayer(ch_in, ch_out, 1, 1, act=act))
+            self.branch2b = nn.Sequential(PartialConv(ch_out),
+                                        ConvNormLayer(ch_out, ch_out, 1, 1, act=act))
+        else:
+            # baseline
+            self.branch2a = ConvNormLayer(ch_in, ch_out, 3, stride, act=act)
+            self.branch2b = ConvNormLayer(ch_out, ch_out, 3, 1, act=None)
         
         
         self.act = nn.Identity() if act is None else get_activation(act) 
@@ -182,7 +180,7 @@ class BottleNeck(nn.Module):        #3个卷积 + 残差，  通道数x4
 
 
 class Blocks(nn.Module):    #多个bottleNeck的堆叠
-    def __init__(self, block, ch_in, ch_out, count, stage_num, act='relu', variant='b', fcm1 = True):
+    def __init__(self, block, ch_in, ch_out, count, stage_num, act='relu', variant='b', basic_improve = False):
         super().__init__()
 
         self.blocks = nn.ModuleList()
@@ -195,7 +193,7 @@ class Blocks(nn.Module):    #多个bottleNeck的堆叠
                     shortcut=False if i == 0 else True,                 #第二个bb开始做跳跃连接
                     variant=variant,
                     act=act,
-                    fcm1=fcm1)
+                    basic_improve = basic_improve)
             )
 
             if i == 0:
@@ -219,7 +217,9 @@ class PResNet(nn.Module):
         act='relu',
         freeze_at=-1,           #0
         freeze_norm=True, 
-        pretrained=False):      #True
+        pretrained=False,
+        conv1_improve = False,
+        basic_improve = False):      #True
         super().__init__()
 
         block_nums = ResNet_cfg[depth]  #[2，2，2，2]
@@ -233,20 +233,23 @@ class PResNet(nn.Module):
         else:
             conv_def = [[3, ch_in, 7, 2, "conv1_1"]]
 
-        self.conv1 = nn.Sequential(OrderedDict([
-            (name, ConvNormLayer(cin, cout, k, s, act=act)) for cin, cout, k, s, name in conv_def   #conv1:conv1_1, 1_2, 1_3
-        ]))
-        
         # MB风格
         # self.conv1 = nn.Sequential(ConvNormLayer(3, ch_in // 2, 3, 2, act=act),
         #                            ConvNormLayer(ch_in // 2, ch_in // 2, 3, 1, act=act, groups = ch_in // 2),
         #                            ConvNormLayer(ch_in // 2, ch_in, 1, 1, act=act),
         #                            )
-        # fasternet风格
-        # self.conv1 = nn.Sequential(ConvNormLayer(3, ch_in//2, 3, 2, act=act),
-        #                             PartialConv(ch_in//2),
-        #                             ConvNormLayer(ch_in//2, ch_in, 1, 1, act=act),                   
-        #                             )
+        if conv1_improve:
+            # fasternet风格
+            self.conv1 = nn.Sequential(ConvNormLayer(3, ch_in//2, 3, 2, act=act),
+                                        PartialConv(ch_in//2),
+                                        ConvNormLayer(ch_in//2, ch_in, 1, 1, act=act),                   
+                                        )
+        else:
+            # baseline
+            self.conv1 = nn.Sequential(OrderedDict([
+            (name, ConvNormLayer(cin, cout, k, s, act=act)) for cin, cout, k, s, name in conv_def   #conv1:conv1_1, 1_2, 1_3
+        ]))
+            
     
 
         ch_out_list = [64, 128, 256, 512]
@@ -260,7 +263,7 @@ class PResNet(nn.Module):
             stage_num = i + 2           # 2,3,4,5
             fcm1 = True if i % 2==0 else False      #T, F, T, F 
             self.res_layers.append(
-                Blocks(block, ch_in, ch_out_list[i], block_nums[i], stage_num, act=act, variant=variant, fcm1 = fcm1)
+                Blocks(block, ch_in, ch_out_list[i], block_nums[i], stage_num, act=act, variant=variant, basic_improve = basic_improve)
             )
             ch_in = _out_channels[i]
 

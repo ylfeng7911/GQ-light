@@ -35,7 +35,7 @@ class RTDETR(nn.Module):            #RT-DETR是一级模块，后面分backbone\
         feat_max = x[0]
         x = x[1:]     
         x = self.encoder(x, samples)             #编码器+PAN交互过的特征图列表，尺度从大到小，c=256
-        x = self.decoder(x, targets, feat_max)    #
+        x = self.decoder(x, targets, feat_max, samples=samples)    #
 
         return x
     

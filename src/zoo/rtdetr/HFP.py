@@ -114,14 +114,16 @@ class DctSpatialInteraction(nn.Module):
         if not self.isdct:
             return x * torch.sigmoid(self.spatial1x1(x))
 
-        # DCT 高频滤波
-        x_dct = dct_2d(x)
+        # DCT 高通滤波
+        x_dct = dct_2d(x)       #此时后2维度从[h,w]意义变为了[u,v]频率位置，小u小v表示低频，大u大v表示高频
         weight = self._compute_weight(h, w, self.ratio, x.device, x.dtype)
         weight = weight.view(1, 1, h, w)
-        x_high = x_dct * weight
-        spatial_mask = idct_2d(x_high)
+        x_high = x_dct * weight         #低频部分过滤掉
+        spatial_mask = idct_2d(x_high)          # 逆变换回来，重新成为特征图（滤除低频部分）
+        spatial_mask = torch.sigmoid(torch.abs(spatial_mask))
 
-        # 注意：原代码这里没有 sigmoid，直接 x * dct_
+
+        # 注意：原代码这里没有 sigmoid，直接 x * dct_      todo：尝试+sigmoid有无改进
         return x * spatial_mask
 
     @staticmethod
@@ -206,7 +208,7 @@ class DctChannelInteraction(nn.Module):
         weight = self._compute_weight(h, w, self.ratio, x.device, x.dtype)
         weight = weight.view(1, 1, h, w)
         x_high = x_dct * weight
-        x_high = idct_2d(x_high)
+        x_high = idct_2d(x_high)            #得到滤除低频信息的特征图
 
         # 原代码中不是直接 GAP/GMP 到 1x1，而是先池化到 patch，再 sum
         amaxp = F.adaptive_max_pool2d(x_high, output_size=(self.h, self.w))     #自动划分为8x8个区域，每个区域做最大值池化
@@ -280,6 +282,7 @@ class HFP(nn.Module):
         channel = self.channel(x)
 
         return self.out(spatial + channel)
+        # return self.out(spatial)
     
 
 if __name__ == '__main__':

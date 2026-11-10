@@ -520,10 +520,7 @@ class CrossScaleAlignFuse(nn.Module):
         self.CBAM_P5 = CBAM(256)
         self.deform_align = DeformConv2d(c, c, kernel_size=3, padding=1, groups=deform_groups)
         self.offset_gen = nn.Conv2d(c, 2*3*3*deform_groups, 3, 1, 1)
-        self.gate = nn.Sequential(
-            nn.Conv2d(c*2, c, 1),
-            nn.Sigmoid()
-        )
+        self.gate = nn.Sequential(nn.Conv2d(c*2, c, 1), nn.Sigmoid())
         self.out_proj = nn.Conv2d(c, c, 1)
 
     def forward(self, P2, P5):
@@ -645,7 +642,7 @@ class MultiKernelPerception(nn.Module):
         self.conv2 = ConvNormLayer(dim, dim, 1, 1)                     # 1x1卷积，仅通道间交互
         self.conv3 = nn.Conv2d(dim, dim, 5, 1, 2, groups=dim)
         self.conv4 = ConvNormLayer(dim, dim, 1, 1)
-        self.conv5 = nn.Conv2d(dim, dim, 7, 2, 3, groups=dim)
+        self.conv5 = nn.Conv2d(dim, dim, 7, 1, 3, groups=dim)
         self.conv6 = ConvNormLayer(dim, dim_out, 1, 1)
         
 

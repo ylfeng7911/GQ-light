@@ -434,16 +434,18 @@ class CSPRepLayer(nn.Module):       #H/W不变   特征融合模块
                  num_blocks=3,      
                  expansion=1.0,             #r18时是0.5
                  bias=None,
-                 act="silu"):
+                 act="silu",
+                 ifFCM = False):
         super(CSPRepLayer, self).__init__()
         hidden_channels = int(out_channels * expansion)
         self.conv1 = ConvNormLayer(in_channels, hidden_channels, 1, 1, bias=bias, act=act)
         self.conv2 = ConvNormLayer(in_channels, hidden_channels, 1, 1, bias=bias, act=act)
-        # 特征融合模块
-        self.bottlenecks = nn.Sequential(*[RepVggBlock(hidden_channels, hidden_channels, act=act) for _ in range(num_blocks)])   
         
-        # self.bottlenecks = nn.Sequential(*[FCM(hidden_channels, hidden_channels) for _ in range(num_blocks)])   #特征融合模块
-        
+        # 特征融合模块  
+        if ifFCM:
+            self.bottlenecks = nn.Sequential(*[FCM(hidden_channels, hidden_channels) for _ in range(num_blocks)])   #特征融合模块
+        else:
+            self.bottlenecks = nn.Sequential(*[RepVggBlock(hidden_channels, hidden_channels, act=act) for _ in range(num_blocks)])
         
         if hidden_channels != out_channels:
             self.conv3 = ConvNormLayer(hidden_channels, out_channels, 1, 1, bias=bias, act=act)
@@ -543,7 +545,9 @@ class HybridEncoder(nn.Module):
                  depth_mult=1.0,
                  act='silu',
                  eval_spatial_size=None, 
-                 version='v2'):     # v1
+                 version='v2',
+                 ifEncoder = True,
+                 ifFCM = False):     # v1
         super().__init__()
         self.in_channels = in_channels
         self.feat_strides = feat_strides
@@ -555,7 +559,9 @@ class HybridEncoder(nn.Module):
         self.out_channels = [hidden_dim for _ in range(len(in_channels))]
         self.out_strides = feat_strides
         
-        self.save_token_heatmap = True
+        self.ifEncoder = ifEncoder
+        
+        self.save_token_heatmap = False
         self.token_heatmap_dir = "./feature_token_vis"
         self.token_heatmap_step = "vis"
         
@@ -580,16 +586,17 @@ class HybridEncoder(nn.Module):
             self.input_proj.append(proj)
 
         # encoder transformer
-        encoder_layer = TransformerEncoderLayer(
-            hidden_dim, 
-            nhead=nhead,
-            dim_feedforward=dim_feedforward, 
-            dropout=dropout,
-            activation=enc_act)
+        if ifEncoder:
+            encoder_layer = TransformerEncoderLayer(
+                hidden_dim, 
+                nhead=nhead,
+                dim_feedforward=dim_feedforward, 
+                dropout=dropout,
+                activation=enc_act)
 
-        self.encoder = nn.ModuleList([
-            TransformerEncoder(copy.deepcopy(encoder_layer), num_encoder_layers) for _ in range(len(use_encoder_idx))
-        ])
+            self.encoder = nn.ModuleList([
+                TransformerEncoder(copy.deepcopy(encoder_layer), num_encoder_layers) for _ in range(len(use_encoder_idx))
+            ])
 
         # top-down fpn
         self.lateral_convs = nn.ModuleList()
@@ -597,7 +604,7 @@ class HybridEncoder(nn.Module):
         for _ in range(len(in_channels) - 1, 0, -1):        #3,2
             self.lateral_convs.append(ConvNormLayer(hidden_dim, hidden_dim, 1, 1, act=act)) #1卷积-归一化-激活函数     C/H/W不变
             self.fpn_blocks.append(
-                CSPRepLayer(hidden_dim * 2, hidden_dim, round(3 * depth_mult), act=act, expansion=expansion))#降通道的特征融合  C减半，H/W不变
+                CSPRepLayer(hidden_dim * 2, hidden_dim, round(3 * depth_mult), act=act, expansion=expansion, ifFCM=ifFCM))#降通道的特征融合  C减半，H/W不变
 
         # bottom-up pan
         self.downsample_convs = nn.ModuleList()
@@ -605,7 +612,7 @@ class HybridEncoder(nn.Module):
         for _ in range(len(in_channels) - 1):       #0,1
             self.downsample_convs.append(ConvNormLayer(hidden_dim, hidden_dim, 3, 2, act=act))  #C不变，H/W减半
             self.pan_blocks.append(
-                CSPRepLayer(hidden_dim * 2, hidden_dim, round(3 * depth_mult), act=act, expansion=expansion)        #C减半,H/W不变
+                CSPRepLayer(hidden_dim * 2, hidden_dim, round(3 * depth_mult), act=act, expansion=expansion, ifFCM=ifFCM)        #C减半,H/W不变
             )
             
 
@@ -642,6 +649,19 @@ class HybridEncoder(nn.Module):
 
     def forward(self, feats, samples=None):
         assert len(feats) == len(self.in_channels)
+        #[128, 256, 512]
+        # input_proj前特征可视化
+        if getattr(self, "save_token_heatmap", False):
+            _save_feat_token_heatmaps(
+                feats,
+                samples, 
+                stage_name="before_input_proj",
+                save_dir=getattr(self, "token_heatmap_dir", "./feature_token_vis"),
+                names=["C3", "C4", "C5"],
+                step=getattr(self, "token_heatmap_step", None),
+            )
+        
+        
         proj_feats = [self.input_proj[i](feat) for i, feat in enumerate(feats)]     #1x1卷积--> c = 256  顺序从下往上
         
         # FPN前特征可视化
@@ -656,30 +676,31 @@ class HybridEncoder(nn.Module):
             )
             
         # encoder   最高级特征图 应用编码器（交互语义信息）
-        if self.num_encoder_layers > 0:
-            for i, enc_ind in enumerate(self.use_encoder_idx):  #0,2
-                h, w = proj_feats[enc_ind].shape[2:]
-                # flatten [B, C, H, W] to [B, HxW, C]
-                src_flatten = proj_feats[enc_ind].flatten(2).permute(0, 2, 1) #展平
-                if self.training or self.eval_spatial_size is None:
-                    pos_embed = self.build_2d_sincos_position_embedding(
-                        w, h, self.hidden_dim, self.pe_temperature).to(src_flatten.device)
-                else:
-                    pos_embed = getattr(self, f'pos_embed{enc_ind}', None).to(src_flatten.device)       #
+        if self.ifEncoder:
+            if self.num_encoder_layers > 0:
+                for i, enc_ind in enumerate(self.use_encoder_idx):  #0,2
+                    h, w = proj_feats[enc_ind].shape[2:]
+                    # flatten [B, C, H, W] to [B, HxW, C]
+                    src_flatten = proj_feats[enc_ind].flatten(2).permute(0, 2, 1) #展平
+                    if self.training or self.eval_spatial_size is None:
+                        pos_embed = self.build_2d_sincos_position_embedding(
+                            w, h, self.hidden_dim, self.pe_temperature).to(src_flatten.device)
+                    else:
+                        pos_embed = getattr(self, f'pos_embed{enc_ind}', None).to(src_flatten.device)       #
 
-                memory :torch.Tensor = self.encoder[i](src_flatten, pos_embed=pos_embed)
-                proj_feats[enc_ind] = memory.permute(0, 2, 1).reshape(-1, self.hidden_dim, h, w).contiguous()   #[b,c,h,w]
+                    memory :torch.Tensor = self.encoder[i](src_flatten, pos_embed=pos_embed)
+                    proj_feats[enc_ind] = memory.permute(0, 2, 1).reshape(-1, self.hidden_dim, h, w).contiguous()   #[b,c,h,w]
 
-        # encoder后特征可视化
-        if getattr(self, "save_token_heatmap", False):
-            _save_feat_token_heatmaps(
-                [proj_feats[-1]],
-                samples, 
-                stage_name="after_encoder",
-                save_dir=getattr(self, "token_heatmap_dir", "./feature_token_vis"),
-                names=["E5"],
-                step=getattr(self, "token_heatmap_step", None),
-            )
+            # encoder后特征可视化
+            if getattr(self, "save_token_heatmap", False):
+                _save_feat_token_heatmaps(
+                    [proj_feats[-1]],
+                    samples, 
+                    stage_name="after_encoder",
+                    save_dir=getattr(self, "token_heatmap_dir", "./feature_token_vis"),
+                    names=["E5"],
+                    step=getattr(self, "token_heatmap_step", None),
+                )
         
 
         # broadcasting and fusion
@@ -717,7 +738,7 @@ class HybridEncoder(nn.Module):
             outs.append(out)
 
         
-        # PAN后特征可视化
+        # # PAN后特征可视化
         if getattr(self, "save_token_heatmap", False):
             _save_feat_token_heatmaps(
                 outs,

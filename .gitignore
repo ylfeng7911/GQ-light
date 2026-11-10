@@ -4,4 +4,8 @@
 /references/*.jpg
 *.pth
 *.pt
-*.onnx 
+*.onnx
+__pycache__/
+*.py[cod]
+/outputs/
+/feature_token_vis/

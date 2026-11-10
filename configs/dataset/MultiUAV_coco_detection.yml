@@ -18,8 +18,8 @@ train_dataloader:
   type: DataLoader
   dataset: 
     type: CocoDetection
-    img_folder: /home/fyl/workspace_fyl/dataset/MultiUAV_COCO_10_even/train2017
-    ann_file: /home/fyl/workspace_fyl/dataset/MultiUAV_COCO_10_even/annotations/instances_train2017.json
+    img_folder: /root/fengyulei/dataset/MultiUAV_COCO_10_even/train2017
+    ann_file: /root/fengyulei/dataset/MultiUAV_COCO_10_even/annotations/instances_train2017.json
     return_masks: False
     transforms:
       type: Compose
@@ -35,8 +35,8 @@ val_dataloader:
   type: DataLoader
   dataset: 
     type: CocoDetection
-    img_folder: /home/fyl/workspace_fyl/dataset/MultiUAV_COCO_10_even/val2017
-    ann_file: /home/fyl/workspace_fyl/dataset/MultiUAV_COCO_10_even/annotations/instances_val2017.json
+    img_folder: /root/fengyulei/dataset/MultiUAV_COCO_10_even/val2017
+    ann_file: /root/fengyulei/dataset/MultiUAV_COCO_10_even/annotations/instances_val2017.json
     return_masks: False
     transforms:
       type: Compose
